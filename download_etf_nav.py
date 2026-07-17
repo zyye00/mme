@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 import time
 from collections.abc import Callable
@@ -15,9 +16,12 @@ import pandas as pd
 from download_etf_shares import TARGET_FUND_CODES
 
 NAV_COLUMNS = ["trade_date", "fund_code", "unit_nav", "cumulative_nav", "daily_return_pct"]
+SPLIT_COLUMNS = ["fund_code", "split_date", "split_type", "split_ratio"]
 UNIT_NAV_COLUMNS = {"净值日期", "单位净值", "日增长率"}
 CUMULATIVE_NAV_COLUMNS = {"净值日期", "累计净值"}
+SPLIT_SOURCE_COLUMNS = {"拆分折算日", "拆分类型", "拆分折算比例"}
 RETURN_WARNING_TOLERANCE = 0.1
+SPLIT_RATIO_PATTERN = re.compile(r"^\s*1\s*:\s*(\d+(?:\.\d+)?)\s*$")
 
 
 @dataclass(frozen=True)
@@ -33,6 +37,16 @@ def normalize_fund_code(value: str) -> str:
     if len(fund_code) != 6 or not fund_code.isdigit():
         raise ValueError(f"无效的基金代码：{fund_code!r}")
     return fund_code
+
+
+def parse_split_ratio(value: object) -> float:
+    match = SPLIT_RATIO_PATTERN.fullmatch(str(value))
+    if not match:
+        raise ValueError(f"无法解析拆分折算比例：{value!r}")
+    ratio = float(match.group(1))
+    if ratio <= 0:
+        raise ValueError(f"拆分折算比例必须为正：{value!r}")
+    return ratio
 
 
 def fetch_etf_nav(
@@ -80,6 +94,28 @@ def fetch_etf_nav(
     )
 
 
+def fetch_etf_splits(
+    fund_code: str,
+    fetch: Callable[..., pd.DataFrame] = ak.fund_open_fund_info_em,
+) -> pd.DataFrame:
+    """Fetch and standardize one ETF's share split history."""
+    fund_code = normalize_fund_code(fund_code)
+    raw = fetch(symbol=fund_code, indicator="拆分详情")
+    if raw.empty:
+        return pd.DataFrame(columns=SPLIT_COLUMNS)
+
+    missing_columns = SPLIT_SOURCE_COLUMNS - set(raw.columns)
+    if missing_columns:
+        raise ValueError(f"拆分数据缺少字段：{', '.join(sorted(missing_columns))}")
+    splits = raw.rename(
+        columns={"拆分折算日": "split_date", "拆分类型": "split_type", "拆分折算比例": "split_ratio"}
+    ).loc[:, ["split_date", "split_type", "split_ratio"]]
+    splits["split_date"] = pd.to_datetime(splits["split_date"], errors="raise").dt.normalize()
+    splits["split_ratio"] = splits["split_ratio"].map(parse_split_ratio)
+    splits.insert(0, "fund_code", fund_code)
+    return splits.drop_duplicates(SPLIT_COLUMNS).sort_values("split_date").reset_index(drop=True)
+
+
 def validate_navs(navs: pd.DataFrame) -> list[str]:
     if navs.duplicated(["fund_code", "trade_date"]).any():
         raise ValueError("净值数据包含重复的基金代码和日期")
@@ -107,6 +143,7 @@ def download_etf_navs(
     progress: Callable[[str], None] = print,
 ) -> NavDownloadResult:
     frames: list[pd.DataFrame] = []
+    split_frames: list[pd.DataFrame] = []
     failures: list[tuple[str, str]] = []
     fund_codes = sorted(fund_codes)
     progress(f"净值下载：共 {len(fund_codes)} 只 ETF")
@@ -119,6 +156,14 @@ def download_etf_navs(
             progress(f"净值下载：{index}/{len(fund_codes)} 失败（{fund_code}）")
         else:
             progress(f"净值下载：{index}/{len(fund_codes)} 完成（{fund_code}）")
+        try:
+            splits = fetch_etf_splits(fund_code, fetch)
+        except Exception as error:
+            failures.append((fund_code, f"拆分详情：{error}"))
+            progress(f"拆分下载：{index}/{len(fund_codes)} 失败（{fund_code}）")
+        else:
+            split_frames.append(splits)
+            progress(f"拆分下载：{index}/{len(fund_codes)} 完成（{fund_code}，{len(splits)} 条）")
         if index < len(fund_codes):
             sleeper(request_interval)
 
@@ -131,6 +176,12 @@ def download_etf_navs(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     navs.to_parquet(output_path, index=False, compression="zstd")
     progress(f"净值下载完成：成功 {len(frames)}/{len(fund_codes)}，输出 {output_path}")
+
+    splits = pd.concat(split_frames, ignore_index=True) if split_frames else pd.DataFrame(columns=SPLIT_COLUMNS)
+    splits = splits.loc[:, SPLIT_COLUMNS].sort_values(["fund_code", "split_date"]).reset_index(drop=True)
+    split_path = output_path.parent / "etf_splits.parquet"
+    splits.to_parquet(split_path, index=False, compression="zstd")
+    progress(f"拆分下载完成：共 {len(splits)} 条，输出 {split_path}")
 
     if failures:
         failure_path = output_path.with_name(f"{output_path.stem}_failures.csv")

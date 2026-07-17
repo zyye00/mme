@@ -27,7 +27,7 @@ conda run -n quant python download_etf_shares.py
 conda run -n quant python download_etf_nav.py
 ```
 
-准备 `data/etf_shares.parquet` 和 `data/etf_nav.parquet` 后，直接运行 Notebook：
+准备 `data/etf_shares.parquet`、`data/etf_nav.parquet` 和 `data/etf_splits.parquet` 后，直接运行 Notebook：
 
 ```bash
 conda run -n quant jupyter notebook analyze_etf.ipynb
@@ -36,3 +36,5 @@ conda run -n quant jupyter notebook analyze_etf.ipynb
 Notebook 把每日正份额变化视为净申购，以“新增份额 × 当日单位净值”估算申购金额。当前暂以累计净值判断申购资金是否赚钱；该收益口径需验证，累计净值并非任意期间的复权总回报。
 
 图表和汇总表均在 Notebook 内联展示，标题、坐标轴、图例和说明均使用中文；不会生成分析 Parquet 或图片文件。
+
+净值下载同时保存 ETF 拆分折算记录。Notebook 会按折算比例自动调整拆分日的净申购份额；若分析区间内存在拆分，会打印基金简称、日期、比例以及调整前后份额供人工复核。
