@@ -1,29 +1,24 @@
-"""Download SSE ETF daily shares from AkShare."""
+"""Download SSE and SZSE ETF daily shares from AkShare."""
 
 from __future__ import annotations
 
 import argparse
 import calendar
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import akshare as ak
 import pandas as pd
 
-TARGET_FUND_CODES = {
-    "510100",
-    "510310",
-    "510580",
-    "159633",
-    "159532",
-    "563020",
-    "588080",
-}
+from etf_universe import TARGET_FUND_CODES
+from output_utils import write_parquet_outputs
+
 REQUIRED_COLUMNS = {"基金代码", "基金简称", "统计日期", "基金份额"}
 SHARE_CHANGE_WARNING_RATIO = 1.0
+SZSE_MAX_QUERY_DAYS = 180
 
 
 @dataclass(frozen=True)
@@ -61,7 +56,26 @@ def trading_dates(start: date, end: date, trade_calendar: pd.DataFrame) -> list[
     return [current_date for current_date in dates if start <= current_date <= end]
 
 
-def standardize_shares(frame: pd.DataFrame, date_column: str) -> pd.DataFrame:
+def date_chunks(start: date, end: date, maximum_days: int = SZSE_MAX_QUERY_DAYS) -> list[tuple[date, date]]:
+    if start > end:
+        raise ValueError("start date must not be after end date")
+    if maximum_days <= 0:
+        raise ValueError("maximum_days must be positive")
+
+    chunks: list[tuple[date, date]] = []
+    chunk_start = start
+    while chunk_start <= end:
+        chunk_end = min(chunk_start + timedelta(days=maximum_days - 1), end)
+        chunks.append((chunk_start, chunk_end))
+        chunk_start = chunk_end + timedelta(days=1)
+    return chunks
+
+
+def standardize_shares(
+    frame: pd.DataFrame,
+    date_column: str,
+    target_fund_codes: Collection[str] = TARGET_FUND_CODES,
+) -> pd.DataFrame:
     required_columns = (REQUIRED_COLUMNS - {"统计日期"}) | {date_column}
     missing_columns = required_columns - set(frame.columns)
     if missing_columns:
@@ -73,7 +87,8 @@ def standardize_shares(frame: pd.DataFrame, date_column: str) -> pd.DataFrame:
     shares["fund_code"] = shares["fund_code"].astype(str).str.zfill(6)
     shares["date"] = pd.to_datetime(shares["date"], errors="raise").dt.date
     shares["total_shares"] = pd.to_numeric(shares["total_shares"], errors="raise")
-    return shares.loc[shares["fund_code"].isin(TARGET_FUND_CODES)].reset_index(drop=True)
+    shares = shares.loc[shares["total_shares"] != 0]
+    return shares.loc[shares["fund_code"].isin(target_fund_codes)].reset_index(drop=True)
 
 
 def validate_shares(shares: pd.DataFrame, dates: list[date]) -> list[str]:
@@ -107,6 +122,7 @@ def download_etf_shares(
     fetch_szse: Callable[[str, str, str], pd.DataFrame] = ak.fund_scale_daily_szse,
     fetch_calendar: Callable[[], pd.DataFrame] = ak.tool_trade_date_hist_sina,
     progress: Callable[[str], None] = print,
+    target_fund_codes: Collection[str] = TARGET_FUND_CODES,
 ) -> DownloadResult:
     sse_raw_frames: list[pd.DataFrame] = []
     share_frames: list[pd.DataFrame] = []
@@ -120,7 +136,7 @@ def download_etf_shares(
     for index, current_date in enumerate(dates, start=1):
         try:
             raw = fetch_sse(current_date.strftime("%Y%m%d"))
-            shares = standardize_shares(raw, "统计日期")
+            shares = standardize_shares(raw, "统计日期", target_fund_codes)
         except Exception as error:
             failed_dates.append((current_date, str(error)))
         else:
@@ -135,35 +151,60 @@ def download_etf_shares(
                 f"SSE: {index}/{len(dates)} complete; empty={len(empty_dates)} failed={len(failed_dates)}"
             )
 
-    progress(f"SZSE: downloading ETF shares from {start} to {end}")
-    try:
-        szse_raw = fetch_szse(start.strftime("%Y%m%d"), end.strftime("%Y%m%d"), "ETF")
-        progress(f"SZSE: received {len(szse_raw)} rows")
-        if not szse_raw.empty:
-            output_dir.mkdir(parents=True, exist_ok=True)
-            szse_path = output_dir / "szse_etf_shares_raw.parquet"
-            szse_raw.to_parquet(szse_path, index=False)
-            progress(f"Output: {szse_path}")
-            share_frames.append(standardize_shares(szse_raw, "日期"))
-    except Exception as error:
-        source_errors.append(f"SZSE: {error}")
-        progress("SZSE: request failed")
+    chunks = [
+        (chunk_start, chunk_end)
+        for chunk_start, chunk_end in date_chunks(start, end)
+        if any(chunk_start <= current_date <= chunk_end for current_date in dates)
+    ]
+    progress(f"SZSE: downloading ETF shares in {len(chunks)} chunk(s) from {start} to {end}")
+    szse_raw_frames: list[pd.DataFrame] = []
+    for index, (chunk_start, chunk_end) in enumerate(chunks, start=1):
+        try:
+            raw = fetch_szse(chunk_start.strftime("%Y%m%d"), chunk_end.strftime("%Y%m%d"), "ETF")
+            if raw.empty:
+                raise ValueError("empty response")
+            share_frames.append(standardize_shares(raw, "日期", target_fund_codes))
+            szse_raw_frames.append(raw)
+        except Exception as error:
+            source_errors.append(f"SZSE {chunk_start} to {chunk_end}: {error}")
+            progress(f"SZSE: chunk {index}/{len(chunks)} failed")
+        else:
+            progress(f"SZSE: chunk {index}/{len(chunks)} complete; rows={len(raw)}")
+    szse_raw = pd.concat(szse_raw_frames, ignore_index=True) if szse_raw_frames else pd.DataFrame()
 
     warnings: list[str] = []
-    if sse_raw_frames:
-        output_dir.mkdir(parents=True, exist_ok=True)
-        sse_path = output_dir / "sse_etf_shares_raw.parquet"
-        pd.concat(sse_raw_frames, ignore_index=True).to_parquet(sse_path, index=False)
-        progress(f"Output: {sse_path}")
+    if empty_dates:
+        source_errors.append(f"SSE: {len(empty_dates)} 个交易日返回空数据")
+    if failed_dates:
+        source_errors.append(f"SSE: {len(failed_dates)} 个交易日下载失败")
+    if not sse_raw_frames:
+        source_errors.append("SSE: 未获得原始份额数据")
+    if not szse_raw_frames:
+        source_errors.append("SZSE: 未获得原始份额数据")
+
     if share_frames:
         shares = pd.concat(share_frames, ignore_index=True)
         warnings = validate_shares(shares, dates)
         shares = shares.sort_values(["date", "fund_code"]).reset_index(drop=True)
-        shares_path = output_dir / "etf_shares.parquet"
-        shares.to_parquet(shares_path, index=False)
-        missing_codes = TARGET_FUND_CODES - set(shares["fund_code"])
-        progress(f"Complete: {len(TARGET_FUND_CODES) - len(missing_codes)}/{len(TARGET_FUND_CODES)} target ETFs found")
-        progress(f"Output: {shares_path}")
+        missing_codes = set(target_fund_codes) - set(shares["fund_code"])
+        if missing_codes:
+            source_errors.append(f"缺少映射 ETF：{', '.join(sorted(missing_codes))}")
+    else:
+        shares = pd.DataFrame()
+        source_errors.append("未获得目标 ETF 份额数据")
+
+    if not source_errors:
+        outputs = {
+            output_dir / "sse_etf_shares_raw.parquet": pd.concat(sse_raw_frames, ignore_index=True),
+            output_dir / "szse_etf_shares_raw.parquet": szse_raw,
+            output_dir / "etf_shares.parquet": shares,
+        }
+        write_parquet_outputs(outputs)
+        progress(f"Complete: {len(target_fund_codes)}/{len(target_fund_codes)} target ETFs found")
+        for path in outputs:
+            progress(f"Output: {path}")
+    else:
+        progress("Incomplete download: existing Parquet outputs were not replaced")
 
     return DownloadResult(
         requested_dates=len(dates),
@@ -210,7 +251,7 @@ def main() -> int:
     if not result.successful_dates:
         print("error: no data was downloaded", file=sys.stderr)
         return 1
-    return int(bool(result.failed_dates or result.source_errors))
+    return int(bool(result.empty_dates or result.failed_dates or result.source_errors))
 
 
 if __name__ == "__main__":

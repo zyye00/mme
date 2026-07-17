@@ -13,7 +13,8 @@ from pathlib import Path
 import akshare as ak
 import pandas as pd
 
-from download_etf_shares import TARGET_FUND_CODES
+from etf_universe import TARGET_FUND_CODES
+from output_utils import write_parquet_outputs
 
 NAV_COLUMNS = ["trade_date", "fund_code", "unit_nav", "cumulative_nav", "daily_return_pct"]
 SPLIT_COLUMNS = ["fund_code", "split_date", "split_type", "split_ratio"]
@@ -22,6 +23,8 @@ CUMULATIVE_NAV_COLUMNS = {"净值日期", "累计净值"}
 SPLIT_SOURCE_COLUMNS = {"拆分折算日", "拆分类型", "拆分折算比例"}
 RETURN_WARNING_TOLERANCE = 0.1
 SPLIT_RATIO_PATTERN = re.compile(r"^\s*1\s*:\s*(\d+(?:\.\d+)?)\s*$")
+MAX_REQUEST_ATTEMPTS = 3
+RETRY_INTERVAL = 1.0
 
 
 @dataclass(frozen=True)
@@ -72,18 +75,22 @@ def fetch_etf_nav(
     unit_nav["daily_return_pct"] = pd.to_numeric(unit_nav["daily_return_pct"], errors="coerce")
 
     if cumulative_raw.empty:
-        cumulative_nav = pd.DataFrame(columns=["trade_date", "cumulative_nav"])
-    else:
-        missing_columns = CUMULATIVE_NAV_COLUMNS - set(cumulative_raw.columns)
-        if missing_columns:
-            raise ValueError(f"累计净值数据缺少字段：{', '.join(sorted(missing_columns))}")
-        cumulative_nav = cumulative_raw.rename(columns={"净值日期": "trade_date", "累计净值": "cumulative_nav"}).loc[
-            :, ["trade_date", "cumulative_nav"]
-        ]
-        cumulative_nav["trade_date"] = pd.to_datetime(cumulative_nav["trade_date"], errors="raise").dt.normalize()
-        cumulative_nav["cumulative_nav"] = pd.to_numeric(cumulative_nav["cumulative_nav"], errors="coerce")
+        raise ValueError(f"未获取到基金 {fund_code} 的累计净值数据")
+    missing_columns = CUMULATIVE_NAV_COLUMNS - set(cumulative_raw.columns)
+    if missing_columns:
+        raise ValueError(f"累计净值数据缺少字段：{', '.join(sorted(missing_columns))}")
+    cumulative_nav = cumulative_raw.rename(columns={"净值日期": "trade_date", "累计净值": "cumulative_nav"}).loc[
+        :, ["trade_date", "cumulative_nav"]
+    ]
+    cumulative_nav["trade_date"] = pd.to_datetime(cumulative_nav["trade_date"], errors="raise").dt.normalize()
+    cumulative_nav["cumulative_nav"] = pd.to_numeric(cumulative_nav["cumulative_nav"], errors="coerce")
+    cumulative_nav = cumulative_nav.dropna(subset=["cumulative_nav"])
+    if cumulative_nav.empty:
+        raise ValueError(f"基金 {fund_code} 没有有效的累计净值数据")
 
-    result = unit_nav.merge(cumulative_nav, on="trade_date", how="left", validate="one_to_one")
+    result = unit_nav.merge(cumulative_nav, on="trade_date", how="inner", validate="one_to_one")
+    if result.empty:
+        raise ValueError(f"基金 {fund_code} 的单位净值与累计净值无共同日期")
     result.insert(1, "fund_code", fund_code)
     return (
         result.dropna(subset=["unit_nav"])
@@ -121,6 +128,8 @@ def validate_navs(navs: pd.DataFrame) -> list[str]:
         raise ValueError("净值数据包含重复的基金代码和日期")
     if (navs["unit_nav"] <= 0).any():
         raise ValueError("单位净值必须为正")
+    if navs["cumulative_nav"].isna().any() or (navs["cumulative_nav"] <= 0).any():
+        raise ValueError("累计净值不能缺失且必须为正")
 
     warnings: list[str] = []
     for fund_code, group in navs.groupby("fund_code"):
@@ -132,6 +141,27 @@ def validate_navs(navs: pd.DataFrame) -> list[str]:
         if (difference > RETURN_WARNING_TOLERANCE).any():
             warnings.append(f"{fund_code}：单位净值变化与接口日增长率存在偏差")
     return warnings
+
+
+def fetch_with_retries(
+    operation: Callable[[], pd.DataFrame],
+    label: str,
+    sleeper: Callable[[float], None],
+    progress: Callable[[str], None],
+    max_attempts: int = MAX_REQUEST_ATTEMPTS,
+) -> pd.DataFrame:
+    if max_attempts <= 0:
+        raise ValueError("max_attempts must be positive")
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return operation()
+        except Exception:
+            if attempt == max_attempts:
+                raise
+            progress(f"{label}：第 {attempt} 次请求失败，准备重试")
+            sleeper(RETRY_INTERVAL)
+    raise RuntimeError("unreachable")
 
 
 def download_etf_navs(
@@ -150,14 +180,26 @@ def download_etf_navs(
 
     for index, fund_code in enumerate(fund_codes, start=1):
         try:
-            frames.append(fetch_etf_nav(fund_code, fetch))
+            frames.append(
+                fetch_with_retries(
+                    lambda: fetch_etf_nav(fund_code, fetch),
+                    f"净值下载 {fund_code}",
+                    sleeper,
+                    progress,
+                )
+            )
         except Exception as error:
             failures.append((fund_code, str(error)))
             progress(f"净值下载：{index}/{len(fund_codes)} 失败（{fund_code}）")
         else:
             progress(f"净值下载：{index}/{len(fund_codes)} 完成（{fund_code}）")
         try:
-            splits = fetch_etf_splits(fund_code, fetch)
+            splits = fetch_with_retries(
+                lambda: fetch_etf_splits(fund_code, fetch),
+                f"拆分下载 {fund_code}",
+                sleeper,
+                progress,
+            )
         except Exception as error:
             failures.append((fund_code, f"拆分详情：{error}"))
             progress(f"拆分下载：{index}/{len(fund_codes)} 失败（{fund_code}）")
@@ -167,26 +209,24 @@ def download_etf_navs(
         if index < len(fund_codes):
             sleeper(request_interval)
 
-    if not frames:
-        raise RuntimeError(f"全部 ETF 净值下载失败：{failures}")
+    failure_path = output_path.with_name(f"{output_path.stem}_failures.csv")
+    if failures:
+        pd.DataFrame(failures, columns=["fund_code", "error"]).to_csv(
+            failure_path, index=False, encoding="utf-8-sig"
+        )
+        progress(f"失败记录：{failure_path}")
+        raise RuntimeError("ETF 净值或拆分下载不完整，现有 Parquet 输出未被替换")
+    failure_path.unlink(missing_ok=True)
 
     navs = pd.concat(frames, ignore_index=True).drop_duplicates(["fund_code", "trade_date"], keep="last")
     navs = navs.sort_values(["fund_code", "trade_date"]).reset_index(drop=True)
     warnings = validate_navs(navs)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    navs.to_parquet(output_path, index=False, compression="zstd")
-    progress(f"净值下载完成：成功 {len(frames)}/{len(fund_codes)}，输出 {output_path}")
-
     splits = pd.concat(split_frames, ignore_index=True) if split_frames else pd.DataFrame(columns=SPLIT_COLUMNS)
     splits = splits.loc[:, SPLIT_COLUMNS].sort_values(["fund_code", "split_date"]).reset_index(drop=True)
     split_path = output_path.parent / "etf_splits.parquet"
-    splits.to_parquet(split_path, index=False, compression="zstd")
+    write_parquet_outputs({output_path: navs, split_path: splits})
+    progress(f"净值下载完成：成功 {len(frames)}/{len(fund_codes)}，输出 {output_path}")
     progress(f"拆分下载完成：共 {len(splits)} 条，输出 {split_path}")
-
-    if failures:
-        failure_path = output_path.with_name(f"{output_path.stem}_failures.csv")
-        pd.DataFrame(failures, columns=["fund_code", "error"]).to_csv(failure_path, index=False, encoding="utf-8-sig")
-        progress(f"失败记录：{failure_path}")
     return NavDownloadResult(len(fund_codes), len(frames), tuple(failures), tuple(warnings))
 
 
