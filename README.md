@@ -30,7 +30,7 @@ conda run -n quant python download_etf_shares.py --start 2026-01-01
 conda run -n quant python download_etf_nav.py
 ```
 
-准备 `data/etf_shares.parquet`、`data/etf_nav.parquet` 和 `data/etf_splits.parquet` 后，直接运行 Notebook：
+准备 `data/etf_shares.parquet`、`data/etf_nav.parquet`、`data/etf_splits.parquet` 和 `data/etf_dividends.parquet` 后，直接运行 Notebook：
 
 ```bash
 conda run -n quant jupyter notebook analyze_etf.ipynb
@@ -40,7 +40,13 @@ Notebook 先在单只 ETF 层识别每日正份额变化，以“新增份额 ×
 
 所有 ETF 使用最新共同净值日作为统一评价日。Notebook 并排展示申购后 60 个净值交易日与申购后至今的收益；不足 60 个交易日的近期批次按至今计算。指数赚钱资金比例仍在 ETF 申购批次层判断盈亏，再用申购金额加总；同一指数、同一日期的气泡金额为各 ETF 申购金额之和，气泡收益为金额加权收益。
 
-当前暂以累计净值判断申购资金是否赚钱；该收益口径需验证，累计净值并非任意期间的复权总回报。
+净值下载同时下载当年指数型股票基金的现金分红，并与净值、拆分记录一起原子更新。收益以单位净值和税前已到账现金分红计算；申购日早于权益登记日且分红发放日不晚于收益截止日时，才计入该批次。现金分红不再投资，不计税费和交易费用。Notebook 会展示已计入分红的中文复核表。
+
+如本地旧版 `data/etf_nav.parquet` 仍含 `cumulative_nav` 列，可运行一次：
+
+```bash
+conda run -n quant python remove_cumulative_nav.py
+```
 
 主表和图表仅展示 7 个指数及“总体”，成分复核表展示“指数 → 管理人+指数 ETF”中文名称，不显示基金代码。所有图表和汇总表均在 Notebook 内联展示，标题、坐标轴、图例和说明均使用中文；不会生成分析 Parquet 或图片文件。如份额或净值数据缺少任一映射 ETF，Notebook 会列出基金简称并停止。
 

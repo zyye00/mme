@@ -8,6 +8,7 @@ import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 import akshare as ak
@@ -16,11 +17,12 @@ import pandas as pd
 from etf_universe import TARGET_FUND_CODES
 from output_utils import write_parquet_outputs
 
-NAV_COLUMNS = ["trade_date", "fund_code", "unit_nav", "cumulative_nav", "daily_return_pct"]
+NAV_COLUMNS = ["trade_date", "fund_code", "unit_nav", "daily_return_pct"]
 SPLIT_COLUMNS = ["fund_code", "split_date", "split_type", "split_ratio"]
+DIVIDEND_COLUMNS = ["fund_code", "record_date", "ex_date", "cash_dividend_per_share", "payment_date"]
 UNIT_NAV_COLUMNS = {"净值日期", "单位净值", "日增长率"}
-CUMULATIVE_NAV_COLUMNS = {"净值日期", "累计净值"}
 SPLIT_SOURCE_COLUMNS = {"拆分折算日", "拆分类型", "拆分折算比例"}
+DIVIDEND_SOURCE_COLUMNS = {"基金代码", "权益登记日", "除息日期", "分红", "分红发放日"}
 RETURN_WARNING_TOLERANCE = 0.1
 SPLIT_RATIO_PATTERN = re.compile(r"^\s*1\s*:\s*(\d+(?:\.\d+)?)\s*$")
 MAX_REQUEST_ATTEMPTS = 3
@@ -56,10 +58,9 @@ def fetch_etf_nav(
     fund_code: str,
     fetch: Callable[..., pd.DataFrame] = ak.fund_open_fund_info_em,
 ) -> pd.DataFrame:
-    """Fetch and combine one ETF's unit and cumulative NAV history."""
+    """Fetch one ETF's unit NAV history."""
     fund_code = normalize_fund_code(fund_code)
     unit_raw = fetch(symbol=fund_code, indicator="单位净值走势")
-    cumulative_raw = fetch(symbol=fund_code, indicator="累计净值走势")
 
     if unit_raw.empty:
         raise ValueError(f"未获取到基金 {fund_code} 的单位净值数据")
@@ -74,26 +75,9 @@ def fetch_etf_nav(
     unit_nav["unit_nav"] = pd.to_numeric(unit_nav["unit_nav"], errors="coerce")
     unit_nav["daily_return_pct"] = pd.to_numeric(unit_nav["daily_return_pct"], errors="coerce")
 
-    if cumulative_raw.empty:
-        raise ValueError(f"未获取到基金 {fund_code} 的累计净值数据")
-    missing_columns = CUMULATIVE_NAV_COLUMNS - set(cumulative_raw.columns)
-    if missing_columns:
-        raise ValueError(f"累计净值数据缺少字段：{', '.join(sorted(missing_columns))}")
-    cumulative_nav = cumulative_raw.rename(columns={"净值日期": "trade_date", "累计净值": "cumulative_nav"}).loc[
-        :, ["trade_date", "cumulative_nav"]
-    ]
-    cumulative_nav["trade_date"] = pd.to_datetime(cumulative_nav["trade_date"], errors="raise").dt.normalize()
-    cumulative_nav["cumulative_nav"] = pd.to_numeric(cumulative_nav["cumulative_nav"], errors="coerce")
-    cumulative_nav = cumulative_nav.dropna(subset=["cumulative_nav"])
-    if cumulative_nav.empty:
-        raise ValueError(f"基金 {fund_code} 没有有效的累计净值数据")
-
-    result = unit_nav.merge(cumulative_nav, on="trade_date", how="inner", validate="one_to_one")
-    if result.empty:
-        raise ValueError(f"基金 {fund_code} 的单位净值与累计净值无共同日期")
-    result.insert(1, "fund_code", fund_code)
+    unit_nav.insert(1, "fund_code", fund_code)
     return (
-        result.dropna(subset=["unit_nav"])
+        unit_nav.dropna(subset=["unit_nav"])
         .drop_duplicates(["fund_code", "trade_date"], keep="last")
         .sort_values("trade_date")
         .reset_index(drop=True)
@@ -123,14 +107,62 @@ def fetch_etf_splits(
     return splits.drop_duplicates(SPLIT_COLUMNS).sort_values("split_date").reset_index(drop=True)
 
 
+def dividend_years(start: date, end: date) -> list[int]:
+    if start > end:
+        raise ValueError("分红下载开始日期不能晚于结束日期")
+    return list(range(start.year, end.year + 1))
+
+
+def fetch_etf_dividends(
+    year: int,
+    fund_codes: set[str] = TARGET_FUND_CODES,
+    fetch: Callable[..., pd.DataFrame] = ak.fund_fh_em,
+) -> pd.DataFrame:
+    """Fetch and standardize ETF cash-dividend events for one calendar year."""
+    raw = fetch(year=str(year), typ="指数型-股票")
+    if raw.empty:
+        return pd.DataFrame(columns=DIVIDEND_COLUMNS)
+
+    missing_columns = DIVIDEND_SOURCE_COLUMNS - set(raw.columns)
+    if missing_columns:
+        raise ValueError(f"分红数据缺少字段：{', '.join(sorted(missing_columns))}")
+
+    dividends = raw.loc[:, list(DIVIDEND_SOURCE_COLUMNS)].rename(
+        columns={
+            "基金代码": "fund_code",
+            "权益登记日": "record_date",
+            "除息日期": "ex_date",
+            "分红": "cash_dividend_per_share",
+            "分红发放日": "payment_date",
+        }
+    )
+    dividends["fund_code"] = dividends["fund_code"].astype(str).str.replace(r"\.0$", "", regex=True).str.strip().str.zfill(6)
+    dividends = dividends.loc[dividends["fund_code"].isin(fund_codes)].copy()
+    if dividends.empty:
+        return pd.DataFrame(columns=DIVIDEND_COLUMNS)
+
+    for column in ["record_date", "ex_date", "payment_date"]:
+        dividends[column] = pd.to_datetime(dividends[column], errors="coerce").dt.normalize()
+    dividends["cash_dividend_per_share"] = pd.to_numeric(dividends["cash_dividend_per_share"], errors="coerce")
+    if dividends[["record_date", "ex_date", "cash_dividend_per_share"]].isna().any().any():
+        raise ValueError(f"{year} 年分红数据包含无法解析的日期或金额")
+    if (dividends["cash_dividend_per_share"] <= 0).any():
+        raise ValueError(f"{year} 年分红金额必须为正")
+
+    dividends = dividends.loc[:, DIVIDEND_COLUMNS].drop_duplicates().sort_values(
+        ["fund_code", "record_date", "ex_date", "payment_date"], na_position="last"
+    )
+    event_columns = ["fund_code", "record_date", "ex_date", "payment_date"]
+    if dividends.duplicated(event_columns).any():
+        raise ValueError(f"{year} 年分红数据包含重复事件")
+    return dividends.reset_index(drop=True)
+
+
 def validate_navs(navs: pd.DataFrame) -> list[str]:
     if navs.duplicated(["fund_code", "trade_date"]).any():
         raise ValueError("净值数据包含重复的基金代码和日期")
     if (navs["unit_nav"] <= 0).any():
         raise ValueError("单位净值必须为正")
-    if navs["cumulative_nav"].isna().any() or (navs["cumulative_nav"] <= 0).any():
-        raise ValueError("累计净值不能缺失且必须为正")
-
     warnings: list[str] = []
     for fund_code, group in navs.groupby("fund_code"):
         ordered = group.sort_values("trade_date")
@@ -167,15 +199,23 @@ def fetch_with_retries(
 def download_etf_navs(
     output_path: Path,
     fund_codes: set[str] = TARGET_FUND_CODES,
+    dividend_start: date | None = None,
+    dividend_end: date | None = None,
     request_interval: float = 0.8,
     fetch: Callable[..., pd.DataFrame] = ak.fund_open_fund_info_em,
+    dividend_fetch: Callable[..., pd.DataFrame] = ak.fund_fh_em,
     sleeper: Callable[[float], None] = time.sleep,
     progress: Callable[[str], None] = print,
 ) -> NavDownloadResult:
     frames: list[pd.DataFrame] = []
     split_frames: list[pd.DataFrame] = []
+    dividend_frames: list[pd.DataFrame] = []
     failures: list[tuple[str, str]] = []
     fund_codes = sorted(fund_codes)
+    today = date.today()
+    dividend_start = dividend_start or date(today.year, 1, 1)
+    dividend_end = dividend_end or today
+    years = dividend_years(dividend_start, dividend_end)
     progress(f"净值下载：共 {len(fund_codes)} 只 ETF")
 
     for index, fund_code in enumerate(fund_codes, start=1):
@@ -209,6 +249,24 @@ def download_etf_navs(
         if index < len(fund_codes):
             sleeper(request_interval)
 
+    progress(f"分红下载：共 {len(years)} 个年度")
+    for index, year in enumerate(years, start=1):
+        try:
+            dividends = fetch_with_retries(
+                lambda: fetch_etf_dividends(year, set(fund_codes), dividend_fetch),
+                f"分红下载 {year}",
+                sleeper,
+                progress,
+            )
+        except Exception as error:
+            failures.append((f"dividends-{year}", str(error)))
+            progress(f"分红下载：{index}/{len(years)} 失败（{year} 年）")
+        else:
+            dividend_frames.append(dividends)
+            progress(f"分红下载：{index}/{len(years)} 完成（{year} 年，{len(dividends)} 条）")
+        if index < len(years):
+            sleeper(request_interval)
+
     failure_path = output_path.with_name(f"{output_path.stem}_failures.csv")
     if failures:
         pd.DataFrame(failures, columns=["fund_code", "error"]).to_csv(
@@ -223,10 +281,20 @@ def download_etf_navs(
     warnings = validate_navs(navs)
     splits = pd.concat(split_frames, ignore_index=True) if split_frames else pd.DataFrame(columns=SPLIT_COLUMNS)
     splits = splits.loc[:, SPLIT_COLUMNS].sort_values(["fund_code", "split_date"]).reset_index(drop=True)
+    dividends = (
+        pd.concat(dividend_frames, ignore_index=True)
+        if dividend_frames
+        else pd.DataFrame(columns=DIVIDEND_COLUMNS)
+    )
+    dividends = dividends.loc[:, DIVIDEND_COLUMNS].drop_duplicates().sort_values(
+        ["fund_code", "record_date", "ex_date", "payment_date"], na_position="last"
+    ).reset_index(drop=True)
     split_path = output_path.parent / "etf_splits.parquet"
-    write_parquet_outputs({output_path: navs, split_path: splits})
+    dividend_path = output_path.parent / "etf_dividends.parquet"
+    write_parquet_outputs({output_path: navs, split_path: splits, dividend_path: dividends})
     progress(f"净值下载完成：成功 {len(frames)}/{len(fund_codes)}，输出 {output_path}")
     progress(f"拆分下载完成：共 {len(splits)} 条，输出 {split_path}")
+    progress(f"分红下载完成：共 {len(dividends)} 条，输出 {dividend_path}")
     return NavDownloadResult(len(fund_codes), len(frames), tuple(failures), tuple(warnings))
 
 
@@ -234,13 +302,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=Path("data/etf_nav.parquet"))
     parser.add_argument("--request-interval", type=float, default=0.8)
+    parser.add_argument("--dividend-start", type=date.fromisoformat, default=date(date.today().year, 1, 1))
+    parser.add_argument("--dividend-end", type=date.fromisoformat, default=date.today())
     return parser
 
 
 def main() -> int:
     args = build_parser().parse_args()
     try:
-        result = download_etf_navs(args.output, request_interval=args.request_interval)
+        result = download_etf_navs(
+            args.output,
+            dividend_start=args.dividend_start,
+            dividend_end=args.dividend_end,
+            request_interval=args.request_interval,
+        )
     except Exception as error:
         print(f"错误：{error}", file=sys.stderr)
         return 1
