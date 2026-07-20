@@ -17,8 +17,12 @@ def test_reviewed_universe_contains_expected_funds() -> None:
         "中证2000": 10,
         "红利低波": 8,
         "科创50": 17,
+        "半导体": 18,
+        "有色金属": 25,
+        "电力": 23,
+        "医药": 14,
     }
-    assert len(ETF_UNIVERSE) == 100
+    assert len(ETF_UNIVERSE) == 180
 
 
 def test_load_etf_universe_rejects_duplicate_fund_code(tmp_path: Path) -> None:
