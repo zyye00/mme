@@ -20,6 +20,7 @@ pytest.ini
 # Project-generated files
 # ====================
 data/
+output/
 *.xlsx
 
 # ====================
