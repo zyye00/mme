@@ -214,10 +214,10 @@ def refresh_etf_universe(
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--universe", type=Path, default=Path("config/etf_universe.csv"))
-    parser.add_argument("--sse-raw", type=Path, default=Path("data/sse_etf_shares_raw.parquet"))
-    parser.add_argument("--szse-raw", type=Path, default=Path("data/szse_etf_shares_raw.parquet"))
+    parser.add_argument("--sse-raw", type=Path, default=Path("data/source/subscription/sse_etf_shares_raw.parquet"))
+    parser.add_argument("--szse-raw", type=Path, default=Path("data/source/subscription/szse_etf_shares_raw.parquet"))
     parser.add_argument("--max-workers", type=int, default=8)
-    parser.add_argument("--cache", type=Path, default=Path("data/etf_overviews.csv"))
+    parser.add_argument("--cache", type=Path, default=Path("data/source/subscription/etf_overviews.csv"))
     return parser
 
 

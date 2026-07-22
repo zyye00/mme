@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pandas as pd
 
-UNIVERSE_PATH = Path(__file__).with_name("config") / "etf_universe.csv"
+UNIVERSE_PATH = Path(__file__).resolve().parents[2] / "config" / "etf_universe.csv"
 UNIVERSE_COLUMNS = ["index_code", "index_name", "index_order", "fund_code", "fund_name", "tracking_target"]
 EXPECTED_INDEXES = {
     "000016": ("上证50", 1),

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from output_utils import write_parquet_outputs
+from mme.common.output import write_parquet_outputs
 
 
 def filter_etfs(details: pd.DataFrame, basics: pd.DataFrame) -> pd.DataFrame:
@@ -21,9 +21,9 @@ def filter_etfs(details: pd.DataFrame, basics: pd.DataFrame) -> pd.DataFrame:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input", type=Path, default=Path("data/margin_financing_buy.parquet"))
-    parser.add_argument("--basics", type=Path, default=Path("data/baostock_security_basics.parquet"))
-    parser.add_argument("--output", type=Path, default=Path("data/margin_financing_etf_buy.parquet"))
+    parser.add_argument("--input", type=Path, default=Path("data/source/margin/margin_financing_buy.parquet"))
+    parser.add_argument("--basics", type=Path, default=Path("data/source/security/baostock_security_basics.parquet"))
+    parser.add_argument("--output", type=Path, default=Path("data/derived/margin/etf_financing_buy.parquet"))
     args = parser.parse_args()
     try:
         etfs = filter_etfs(pd.read_parquet(args.input), pd.read_parquet(args.basics))

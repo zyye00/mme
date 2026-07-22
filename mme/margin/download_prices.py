@@ -10,7 +10,7 @@ from pathlib import Path
 import baostock as bs
 import pandas as pd
 
-from output_utils import write_parquet_outputs
+from mme.common.output import write_parquet_outputs
 
 PRICE_COLUMNS = [
     "trade_date",
@@ -87,11 +87,11 @@ def download_prices(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input", type=Path, default=Path("data/margin_financing_etf_buy.parquet"))
-    parser.add_argument("--output", type=Path, default=Path("data/etf_margin_prices.parquet"))
+    parser.add_argument("--input", type=Path, default=Path("data/derived/margin/etf_financing_buy.parquet"))
+    parser.add_argument("--output", type=Path, default=Path("data/source/margin/etf_margin_prices.parquet"))
     parser.add_argument("--start", type=date.fromisoformat, default=date(2026, 1, 1))
     parser.add_argument("--end", type=date.fromisoformat, default=date.today())
-    parser.add_argument("--request-log", type=Path, default=Path("data/baostock_etf_price_requests.csv"))
+    parser.add_argument("--request-log", type=Path, default=Path("data/state/baostock/etf_price_requests.csv"))
     parser.add_argument("--max-requests-per-day", type=int, default=50_000)
     args = parser.parse_args()
     try:

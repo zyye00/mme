@@ -6,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from download_etf_nav import (
+from mme.subscription.download_nav import (
     dividend_years,
     download_etf_navs,
     fetch_etf_dividends,

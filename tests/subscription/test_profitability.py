@@ -4,7 +4,7 @@ from datetime import date
 
 import pandas as pd
 
-from etf_profitability import _cash_dividends, _eligible_dividend_events
+from mme.subscription.profitability import _cash_dividends, _eligible_dividend_events
 
 
 def test_cash_dividends_require_earlier_subscription_and_paid_date() -> None:

@@ -3,7 +3,7 @@ from datetime import date
 import pandas as pd
 import pytest
 
-from download_etf_shares import date_chunks, download_etf_shares, standardize_shares, validate_shares
+from mme.subscription.download_shares import date_chunks, download_etf_shares, standardize_shares, validate_shares
 
 
 def response(day: str, shares: float = 100.0) -> pd.DataFrame:

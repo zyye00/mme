@@ -3,7 +3,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from etf_universe import ETF_UNIVERSE, UNIVERSE_COLUMNS, load_etf_universe
+from mme.subscription.universe import ETF_UNIVERSE, UNIVERSE_COLUMNS, load_etf_universe
 
 
 def test_reviewed_universe_contains_expected_funds() -> None:

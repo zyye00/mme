@@ -13,8 +13,8 @@ from pathlib import Path
 import akshare as ak
 import pandas as pd
 
-from etf_universe import TARGET_FUND_CODES
-from output_utils import write_parquet_outputs
+from mme.common.output import write_parquet_outputs
+from mme.subscription.universe import TARGET_FUND_CODES
 
 REQUIRED_COLUMNS = {"基金代码", "基金简称", "统计日期", "基金份额"}
 SHARE_CHANGE_WARNING_RATIO = 1.0
@@ -220,7 +220,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--start", type=parse_date, default=six_months_ago(date.today()))
     parser.add_argument("--end", type=parse_date, default=date.today())
-    parser.add_argument("--output-dir", type=Path, default=Path("data"))
+    parser.add_argument("--output-dir", type=Path, default=Path("data/source/subscription"))
     return parser
 
 

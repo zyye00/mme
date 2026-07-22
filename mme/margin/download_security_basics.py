@@ -9,7 +9,7 @@ from pathlib import Path
 import baostock as bs
 import pandas as pd
 
-from output_utils import write_parquet_outputs
+from mme.common.output import write_parquet_outputs
 
 SECURITY_TYPE_MAP = {
     "1": "stock",
@@ -60,7 +60,7 @@ def download_security_basics(output: Path) -> pd.DataFrame:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, default=Path("data/baostock_security_basics.parquet"))
+    parser.add_argument("--output", type=Path, default=Path("data/source/security/baostock_security_basics.parquet"))
     args = parser.parse_args()
     try:
         basics = download_security_basics(args.output)

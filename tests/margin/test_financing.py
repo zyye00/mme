@@ -2,9 +2,9 @@ from datetime import date
 
 import pandas as pd
 
-from analyze_margin_financing import analyze_first_day
-from download_margin_financing import download_margin_financing, standardize_details
-from filter_margin_financing_etfs import filter_etfs
+from mme.margin.build_etf_details import filter_etfs
+from mme.margin.download_details import download_margin_financing, standardize_details
+from mme.margin.summarize_first_day import analyze_first_day
 
 
 def test_standardize_details_normalizes_sse_and_szse_rows() -> None:

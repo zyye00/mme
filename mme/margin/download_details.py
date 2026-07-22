@@ -12,8 +12,8 @@ from pathlib import Path
 import akshare as ak
 import pandas as pd
 
-from download_etf_shares import parse_date, trading_dates
-from output_utils import write_parquet_outputs
+from mme.common.output import write_parquet_outputs
+from mme.subscription.download_shares import parse_date, trading_dates
 
 OUTPUT_COLUMNS = [
     "trade_date",
@@ -105,7 +105,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--start", type=parse_date, default=date(2026, 1, 1))
     parser.add_argument("--end", type=parse_date, default=date.today())
-    parser.add_argument("--output", type=Path, default=Path("data/margin_financing_buy.parquet"))
+    parser.add_argument("--output", type=Path, default=Path("data/source/margin/margin_financing_buy.parquet"))
     parser.add_argument("--workers", type=int, default=8)
     return parser
 

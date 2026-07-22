@@ -5,7 +5,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from refresh_etf_universe import (
+from mme.subscription.refresh_universe import (
     BASE_COLUMNS,
     INDUSTRIES,
     UNIVERSE_COLUMNS,

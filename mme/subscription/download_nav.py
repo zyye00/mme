@@ -14,8 +14,8 @@ from pathlib import Path
 import akshare as ak
 import pandas as pd
 
-from etf_universe import TARGET_FUND_CODES
-from output_utils import write_parquet_outputs
+from mme.common.output import write_parquet_outputs
+from mme.subscription.universe import TARGET_FUND_CODES
 
 NAV_COLUMNS = ["trade_date", "fund_code", "unit_nav", "daily_return_pct"]
 SPLIT_COLUMNS = ["fund_code", "split_date", "split_type", "split_ratio"]
@@ -300,7 +300,7 @@ def download_etf_navs(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, default=Path("data/etf_nav.parquet"))
+    parser.add_argument("--output", type=Path, default=Path("data/source/subscription/etf_nav.parquet"))
     parser.add_argument("--request-interval", type=float, default=0.8)
     parser.add_argument("--dividend-start", type=date.fromisoformat, default=date(date.today().year, 1, 1))
     parser.add_argument("--dividend-end", type=date.fromisoformat, default=date.today())

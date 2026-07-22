@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from etf_universe import load_etf_universe
+from mme.subscription.universe import load_etf_universe
 
 SHARE_COLUMNS = {"date", "fund_code", "fund_name", "total_shares"}
 NAV_COLUMNS = {"trade_date", "fund_code", "unit_nav", "daily_return_pct"}

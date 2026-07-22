@@ -1,0 +1,1 @@
+"""ETF profitability analysis package."""

@@ -41,9 +41,9 @@ def analyze_first_day(details: pd.DataFrame, threshold: float) -> tuple[pd.DataF
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input", type=Path, default=Path("data/margin_financing_etf_buy.parquet"))
+    parser.add_argument("--input", type=Path, default=Path("data/derived/margin/etf_financing_buy.parquet"))
     parser.add_argument("--threshold", type=float, default=0.8)
-    parser.add_argument("--output-dir", type=Path, default=Path("output"))
+    parser.add_argument("--output-dir", type=Path, default=Path("output/margin"))
     return parser
 
 

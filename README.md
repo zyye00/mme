@@ -6,19 +6,19 @@
 
 统计 7 个宽基或策略指数：上证50、沪深300、中证500、中证1000、中证2000、红利低波、科创50，以及半导体、有色金属、电力、医药 4 个行业组。每个组包含多只精确跟踪的境内被动 ETF。
 
-ETF 与分组的显式映射位于 `config/etf_universe.csv`，最后跟踪标的核对日期为 **2026-07-20**。当前清单共 180 只 ETF；行业 ETF 仅按 AkShare 概况接口的“跟踪标的”归类：半导体、有色、电力和医药使用严格关键词，医药排除医疗、创新药和生物医药等近似主题。新上市 ETF 须运行 `refresh_etf_universe.py` 并人工复核后再纳入。
+ETF 与分组的显式映射位于 `config/etf_universe.csv`，最后跟踪标的核对日期为 **2026-07-20**。当前清单共 180 只 ETF；行业 ETF 仅按 AkShare 概况接口的“跟踪标的”归类：半导体、有色、电力和医药使用严格关键词，医药排除医疗、创新药和生物医药等近似主题。新上市 ETF 须运行 `mme.subscription.refresh_universe` 并人工复核后再纳入。
 
 ### 下载基金份额
 
 ```bash
-conda run -n quant python download_etf_shares.py --start 2026-01-01
+"$HOME/miniforge3/bin/conda" run -n quant python -m mme.subscription.download_shares --start 2026-01-01
 ```
 
 默认生成：
 
-- `data/etf_shares.parquet`：沪深目标 ETF 合并后的日频份额。
-- `data/sse_etf_shares_raw.parquet`：上交所原始数据。
-- `data/szse_etf_shares_raw.parquet`：深交所原始数据。
+- `data/source/subscription/etf_shares.parquet`：沪深目标 ETF 合并后的日频份额。
+- `data/source/subscription/sse_etf_shares_raw.parquet`：上交所原始数据。
+- `data/source/subscription/szse_etf_shares_raw.parquet`：深交所原始数据。
 
 下载脚本只保留显式映射内的 ETF。任一上交所交易日、深交所数据源或映射 ETF 缺失时，脚本返回非零状态，且不会用不完整结果覆盖旧 Parquet。
 
@@ -27,13 +27,13 @@ conda run -n quant python download_etf_shares.py --start 2026-01-01
 先下载 ETF 净值：
 
 ```bash
-conda run -n quant python download_etf_nav.py
+"$HOME/miniforge3/bin/conda" run -n quant python -m mme.subscription.download_nav
 ```
 
-准备 `data/etf_shares.parquet`、`data/etf_nav.parquet`、`data/etf_splits.parquet` 和 `data/etf_dividends.parquet` 后，直接运行 Notebook：
+准备 `data/source/subscription/` 下的份额、净值、拆分和分红数据后，直接运行 Notebook：
 
 ```bash
-conda run -n quant jupyter notebook analyze_etf.ipynb
+"$HOME/miniforge3/bin/conda" run -n quant jupyter notebook notebooks/etf_subscription_profitability.ipynb
 ```
 
 Notebook 先在单只 ETF 层识别每日正份额变化，以“新增份额 × 当日单位净值”估算申购金额，然后按申购金额汇总到指数。一只 ETF 的赎回不会抵消另一只 ETF 的正净申购；新上市 ETF 的首条份额不计为申购。
@@ -45,3 +45,15 @@ Notebook 先在单只 ETF 层识别每日正份额变化，以“新增份额 ×
 主表和图表仅展示 7 个指数及“总体”，成分复核表展示“指数 → 管理人+指数 ETF”中文名称，不显示基金代码。所有图表和汇总表均在 Notebook 内联展示，标题、坐标轴、图例和说明均使用中文；不会生成分析 Parquet 或图片文件。如份额或净值数据缺少任一映射 ETF，Notebook 会列出基金简称并停止。
 
 净值下载同时保存 ETF 拆分折算记录。Notebook 会按折算比例自动调整拆分日的净申购份额；若分析区间内存在拆分，会打印基金简称、日期、比例以及调整前后份额供人工复核。
+
+## ETF 两融
+
+两融原始明细、价格和证券基本信息位于 `data/source/`；ETF 筛选结果、固定样本、覆盖率与赚钱比例位于 `data/derived/margin/`；面向人阅读的样本清单在 `output/margin/`。
+
+```bash
+"$HOME/miniforge3/bin/conda" run -n quant python -m mme.margin.download_details
+"$HOME/miniforge3/bin/conda" run -n quant python -m mme.margin.download_security_basics
+"$HOME/miniforge3/bin/conda" run -n quant python -m mme.margin.build_etf_details
+"$HOME/miniforge3/bin/conda" run -n quant python -m mme.margin.download_prices
+"$HOME/miniforge3/bin/conda" run -n quant jupyter notebook notebooks/etf_margin_profitability.ipynb
+```
