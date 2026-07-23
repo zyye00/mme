@@ -2,7 +2,7 @@
 
 看看不同时点进来的资金赚钱的比例，比如不同时点申购的ETF，两融资金、公募偏股基金
 
-## ETF
+## ETF 申购
 
 统计 7 个宽基或策略指数：上证50、沪深300、中证500、中证1000、中证2000、红利低波、科创50，以及半导体、有色金属、电力、医药 4 个行业组。每个组包含多只精确跟踪的境内被动 ETF。
 
@@ -46,26 +46,35 @@ Notebook 先在单只 ETF 层识别每日正份额变化，以“新增份额 ×
 
 净值下载同时保存 ETF 拆分折算记录。Notebook 会按折算比例自动调整拆分日的净申购份额；若分析区间内存在拆分，会打印基金简称、日期、比例以及调整前后份额供人工复核。
 
-## ETF 两融
+## 两融融资分析
 
-两融原始明细、价格和证券基本信息位于 `data/source/`；ETF 筛选结果、固定样本、覆盖率与赚钱比例位于 `data/derived/margin/`；面向人阅读的样本清单在 `output/margin/`。
+全证券融资买入资金的分析结果见 [全证券融资买入资金赚钱效应 Notebook](notebooks/all_security_margin_profitability.ipynb)。该 Notebook 展示首日累计覆盖 80% 融资买入额的固定样本、证券类型统计、日度样本资金占比与累计赚钱资金比例。
+
+ETF 专项结果见 [ETF 融资买入资金赚钱效应 Notebook](notebooks/etf_margin_profitability.ipynb)。
+
+### 复现全证券结果
+
+依次下载两融明细和 BaoStock 证券基础信息；随后在首个交易日按融资买入额从高到低选取累计达到 80% 的最小样本，并下载这批证券的日线行情：
 
 ```bash
 "$HOME/miniforge3/bin/conda" run -n quant python -m mme.margin.download_details
 "$HOME/miniforge3/bin/conda" run -n quant python -m mme.margin.download_security_basics
-"$HOME/miniforge3/bin/conda" run -n quant python -m mme.margin.build_etf_details
-"$HOME/miniforge3/bin/conda" run -n quant python -m mme.margin.download_prices
 "$HOME/miniforge3/bin/conda" run -n quant python -m mme.margin.summarize_first_day
-"$HOME/miniforge3/bin/conda" run -n quant jupyter notebook notebooks/etf_margin_profitability.ipynb
-```
-
-`summarize_first_day` 默认覆盖全部证券，在首个交易日按融资买入额选取累计达到 80% 的最小样本，并用本地 BaoStock 基础信息标注证券类型。它会在 `output/margin/` 输出按证券类型聚类的明细、总体汇总与类型汇总 CSV。
-
-选样还会写入 `data/derived/margin/first_day_top80_all_securities.parquet`，可作为行情下载器输入：
-
-```bash
 "$HOME/miniforge3/bin/conda" run -n quant python -m mme.margin.download_prices \
   --input data/derived/margin/first_day_top80_all_securities.parquet \
   --output data/source/margin/first_day_top80_all_securities_prices.parquet \
   --request-log data/state/baostock/all_security_price_requests.csv
+"$HOME/miniforge3/bin/conda" run -n quant jupyter notebook notebooks/all_security_margin_profitability.ipynb
+```
+
+两融明细和基础信息分别保存在 `data/source/margin/margin_financing_buy.parquet`、`data/source/security/baostock_security_basics.parquet`。固定样本保存在 `data/derived/margin/first_day_top80_all_securities.parquet`，对应行情保存在 `data/source/margin/first_day_top80_all_securities_prices.parquet`；按证券类型聚类、供人工查看的样本清单位于 `output/margin/first_day_top80_all_securities_by_type.csv`。
+
+### 复现 ETF 专项结果
+
+在下载上述两融明细与证券基础信息后，执行以下命令筛选 ETF、下载行情并打开 Notebook：
+
+```bash
+"$HOME/miniforge3/bin/conda" run -n quant python -m mme.margin.build_etf_details
+"$HOME/miniforge3/bin/conda" run -n quant python -m mme.margin.download_prices
+"$HOME/miniforge3/bin/conda" run -n quant jupyter notebook notebooks/etf_margin_profitability.ipynb
 ```
