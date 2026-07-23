@@ -55,5 +55,17 @@ Notebook 先在单只 ETF 层识别每日正份额变化，以“新增份额 ×
 "$HOME/miniforge3/bin/conda" run -n quant python -m mme.margin.download_security_basics
 "$HOME/miniforge3/bin/conda" run -n quant python -m mme.margin.build_etf_details
 "$HOME/miniforge3/bin/conda" run -n quant python -m mme.margin.download_prices
+"$HOME/miniforge3/bin/conda" run -n quant python -m mme.margin.summarize_first_day
 "$HOME/miniforge3/bin/conda" run -n quant jupyter notebook notebooks/etf_margin_profitability.ipynb
+```
+
+`summarize_first_day` 默认覆盖全部证券，在首个交易日按融资买入额选取累计达到 80% 的最小样本，并用本地 BaoStock 基础信息标注证券类型。它会在 `output/margin/` 输出按证券类型聚类的明细、总体汇总与类型汇总 CSV。
+
+选样还会写入 `data/derived/margin/first_day_top80_all_securities.parquet`，可作为行情下载器输入：
+
+```bash
+"$HOME/miniforge3/bin/conda" run -n quant python -m mme.margin.download_prices \
+  --input data/derived/margin/first_day_top80_all_securities.parquet \
+  --output data/source/margin/first_day_top80_all_securities_prices.parquet \
+  --request-log data/state/baostock/all_security_price_requests.csv
 ```

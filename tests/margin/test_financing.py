@@ -1,10 +1,11 @@
 from datetime import date
 
 import pandas as pd
+import pytest
 
 from mme.margin.build_etf_details import filter_etfs
 from mme.margin.download_details import download_margin_financing, standardize_details
-from mme.margin.summarize_first_day import analyze_first_day
+from mme.margin.summarize_first_day import analyze_first_day, annotate_security_types, summarize_security_types
 
 
 def test_standardize_details_normalizes_sse_and_szse_rows() -> None:
@@ -63,3 +64,32 @@ def test_analyze_uses_minimal_etf_prefix() -> None:
     assert selected["security_code"].tolist() == ["510300"]
     assert selected.iloc[-1]["cumulative_ratio"] == 1
     assert summary.loc[0, "security_count"] == 1
+
+
+def test_annotate_security_types_clusters_detail_and_summarizes_amounts() -> None:
+    selected = pd.DataFrame(
+        {
+            "security_code": ["510300", "600000", "300001"],
+            "exchange": ["SSE", "SSE", "SZSE"],
+            "financing_buy_amount": [20.0, 10.0, 30.0],
+        }
+    )
+    basics = pd.DataFrame(
+        {
+            "security_code": ["510300", "600000", "300001"],
+            "exchange": ["SSE", "SSE", "SZSE"],
+            "security_type": ["etf", "stock", "stock"],
+        }
+    )
+
+    annotated = annotate_security_types(selected, basics)
+    summary = summarize_security_types(annotated)
+
+    assert annotated["security_type"].tolist() == ["stock", "stock", "etf"]
+    assert annotated["type_rank"].tolist() == [1, 2, 1]
+    assert summary[["security_type", "security_count"]].to_dict("records") == [
+        {"security_type": "stock", "security_count": 2},
+        {"security_type": "etf", "security_count": 1},
+    ]
+    assert summary["sample_amount_ratio"].tolist() == pytest.approx([2 / 3, 1 / 3])
+

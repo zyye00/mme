@@ -1,4 +1,4 @@
-"""Download raw and post-adjusted daily ETF prices from BaoStock."""
+"""Download raw and post-adjusted daily security prices from BaoStock."""
 
 from __future__ import annotations
 
