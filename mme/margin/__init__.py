@@ -1,7 +1,6 @@
-"""ETF margin-financing research."""
+"""All-security margin-financing research."""
 
 __all__ = [
-    "build_etf_details",
     "download_details",
     "download_prices",
     "download_security_basics",

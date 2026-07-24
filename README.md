@@ -48,11 +48,9 @@ Notebook 先在单只 ETF 层识别每日正份额变化，以“新增份额 ×
 
 ## 两融融资分析
 
-全证券融资买入资金的分析结果见 [全证券融资买入资金赚钱效应 Notebook](notebooks/all_security_margin_profitability.ipynb)。该 Notebook 展示首日累计覆盖 80% 融资买入额的固定样本、证券类型统计、日度样本资金占比与累计赚钱资金比例。
+融资买入资金的分析结果见 [融资买入资金赚钱效应 Notebook](notebooks/margin_profitability.ipynb)。该 Notebook 展示首日累计覆盖 80% 融资买入额的固定样本、证券类型统计、日度样本资金占比与累计赚钱资金比例。
 
-ETF 专项结果见 [ETF 融资买入资金赚钱效应 Notebook](notebooks/etf_margin_profitability.ipynb)。
-
-### 复现全证券结果
+### 复现结果
 
 依次下载两融明细和 BaoStock 证券基础信息；随后在首个交易日按融资买入额从高到低选取累计达到 80% 的最小样本，并下载这批证券的日线行情：
 
@@ -61,20 +59,10 @@ python -m mme.margin.download_details
 python -m mme.margin.download_security_basics
 python -m mme.margin.summarize_first_day
 python -m mme.margin.download_prices \
-  --input data/derived/margin/first_day_top80_all_securities.parquet \
-  --output data/source/margin/first_day_top80_all_securities_prices.parquet \
-  --request-log data/state/baostock/all_security_price_requests.csv
-jupyter notebook notebooks/all_security_margin_profitability.ipynb
+  --input data/derived/margin/first_day_top80.parquet \
+  --output data/source/margin/first_day_top80_prices.parquet \
+  --request-log data/state/baostock/price_requests.csv
+jupyter notebook notebooks/margin_profitability.ipynb
 ```
 
-两融明细和基础信息分别保存在 `data/source/margin/margin_financing_buy.parquet`、`data/source/security/baostock_security_basics.parquet`。固定样本保存在 `data/derived/margin/first_day_top80_all_securities.parquet`，对应行情保存在 `data/source/margin/first_day_top80_all_securities_prices.parquet`；按证券类型聚类、供人工查看的样本清单位于 `output/margin/first_day_top80_all_securities_by_type.csv`。
-
-### 复现 ETF 专项结果
-
-在下载上述两融明细与证券基础信息后，执行以下命令筛选 ETF、下载行情并打开 Notebook：
-
-```bash
-python -m mme.margin.build_etf_details
-python -m mme.margin.download_prices
-jupyter notebook notebooks/etf_margin_profitability.ipynb
-```
+两融明细和基础信息分别保存在 `data/source/margin/margin_financing_buy.parquet`、`data/source/security/baostock_security_basics.parquet`。固定样本保存在 `data/derived/margin/first_day_top80.parquet`，对应行情保存在 `data/source/margin/first_day_top80_prices.parquet`；按证券类型聚类、供人工查看的样本清单位于 `output/margin/first_day_top80_by_type.csv`。

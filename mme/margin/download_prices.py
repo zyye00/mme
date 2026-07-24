@@ -87,11 +87,17 @@ def download_prices(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input", type=Path, default=Path("data/derived/margin/etf_financing_buy.parquet"))
-    parser.add_argument("--output", type=Path, default=Path("data/source/margin/etf_margin_prices.parquet"))
+    parser.add_argument(
+        "--input", type=Path, default=Path("data/derived/margin/first_day_top80.parquet")
+    )
+    parser.add_argument(
+        "--output", type=Path, default=Path("data/source/margin/first_day_top80_prices.parquet")
+    )
     parser.add_argument("--start", type=date.fromisoformat, default=date(2026, 1, 1))
     parser.add_argument("--end", type=date.fromisoformat, default=date.today())
-    parser.add_argument("--request-log", type=Path, default=Path("data/state/baostock/etf_price_requests.csv"))
+    parser.add_argument(
+        "--request-log", type=Path, default=Path("data/state/baostock/price_requests.csv")
+    )
     parser.add_argument("--max-requests-per-day", type=int, default=50_000)
     args = parser.parse_args()
     try:

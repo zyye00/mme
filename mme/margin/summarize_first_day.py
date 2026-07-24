@@ -94,7 +94,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--data-output",
         type=Path,
-        default=Path("data/derived/margin/first_day_top80_all_securities.parquet"),
+        default=Path("data/derived/margin/first_day_top80.parquet"),
     )
     parser.add_argument("--output-dir", type=Path, default=Path("output/margin"))
     return parser
@@ -108,9 +108,9 @@ def main() -> int:
         type_summary = summarize_security_types(selected)
         write_parquet_outputs({args.data_output: selected})
         args.output_dir.mkdir(parents=True, exist_ok=True)
-        detail_path = args.output_dir / "first_day_top80_all_securities_by_type.csv"
-        summary_path = args.output_dir / "first_day_top80_all_securities_summary.csv"
-        type_summary_path = args.output_dir / "first_day_top80_all_securities_type_summary.csv"
+        detail_path = args.output_dir / "first_day_top80_by_type.csv"
+        summary_path = args.output_dir / "first_day_top80_summary.csv"
+        type_summary_path = args.output_dir / "first_day_top80_type_summary.csv"
         selected.to_csv(detail_path, index=False, encoding="utf-8-sig")
         summary.to_csv(summary_path, index=False, encoding="utf-8-sig")
         type_summary.to_csv(type_summary_path, index=False, encoding="utf-8-sig")
