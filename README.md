@@ -60,9 +60,8 @@ python -m mme.margin.download_security_basics
 python -m mme.margin.summarize_first_day
 python -m mme.margin.download_prices \
   --input data/derived/margin/first_day_top80.parquet \
-  --output data/source/margin/first_day_top80_prices.parquet \
-  --request-log data/state/baostock/price_requests.csv
+  --output data/source/margin/first_day_top80_prices.parquet
 jupyter notebook notebooks/margin_profitability.ipynb
 ```
 
-两融明细和基础信息分别保存在 `data/source/margin/margin_financing_buy.parquet`、`data/source/security/baostock_security_basics.parquet`。固定样本保存在 `data/derived/margin/first_day_top80.parquet`，对应行情保存在 `data/source/margin/first_day_top80_prices.parquet`；按证券类型聚类、供人工查看的样本清单位于 `output/margin/first_day_top80_by_type.csv`。
+两融明细和基础信息分别保存在 `data/source/margin/margin_financing_buy.parquet`、`data/source/security/baostock_security_basics.parquet`。固定样本保存在 `data/derived/margin/first_day_top80.parquet`，对应行情保存在 `data/source/margin/first_day_top80_prices.parquet`；按证券类型聚类、供人工查看的样本清单位于 `output/margin/first_day_top80_by_type.csv`。全部 BaoStock 查询共用 `data/state/baostock/requests.csv`：每个自然日自动清空，以文件数据行数作为当日已请求数。

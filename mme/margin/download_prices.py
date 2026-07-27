@@ -10,6 +10,7 @@ from pathlib import Path
 import baostock as bs
 import pandas as pd
 
+from mme.common.baostock_requests import reserve_baostock_request
 from mme.common.output import write_parquet_outputs
 
 PRICE_COLUMNS = [
@@ -27,21 +28,12 @@ def download_prices(
     margin: pd.DataFrame,
     start: date,
     end: date,
-    request_log: Path,
     max_requests_per_day: int,
 ) -> pd.DataFrame:
     if max_requests_per_day <= 0:
         raise ValueError("max_requests_per_day must be positive")
     universe = margin.loc[:, ["exchange", "security_code"]].drop_duplicates().copy()
     frames: list[pd.DataFrame] = []
-    request_date = date.today().isoformat()
-    if request_log.exists():
-        log = pd.read_csv(request_log)
-        if set(log.columns) != {"request_date", "code", "adjustflag"}:
-            raise ValueError(f"invalid request log: {request_log}")
-        requests_used = int((log["request_date"] == request_date).sum())
-    else:
-        requests_used = 0
     login = bs.login()
     if login.error_code != "0":
         raise RuntimeError(f"BaoStock login failed: {login.error_msg}")
@@ -50,15 +42,7 @@ def download_prices(
             code = f"{'sh' if row.exchange == 'SSE' else 'sz'}.{row.security_code}"
             rows: list[list[str]] = []
             for adjustflag, fields in (("3", "date,close,volume,amount"), ("1", "date,close")):
-                if requests_used >= max_requests_per_day:
-                    raise RuntimeError(
-                        f"BaoStock daily request limit reached: {requests_used}/{max_requests_per_day}"
-                    )
-                request_log.parent.mkdir(parents=True, exist_ok=True)
-                pd.DataFrame([[request_date, code, adjustflag]], columns=["request_date", "code", "adjustflag"]).to_csv(
-                    request_log, mode="a", header=not request_log.exists(), index=False
-                )
-                requests_used += 1
+                reserve_baostock_request('query_history_k_data_plus', max_requests_per_day, code, adjustflag)
                 result = bs.query_history_k_data_plus(
                     code, fields, start.isoformat(), end.isoformat(), "d", adjustflag
                 )
@@ -95,14 +79,11 @@ def main() -> int:
     )
     parser.add_argument("--start", type=date.fromisoformat, default=date(2026, 1, 1))
     parser.add_argument("--end", type=date.fromisoformat, default=date.today())
-    parser.add_argument(
-        "--request-log", type=Path, default=Path("data/state/baostock/price_requests.csv")
-    )
     parser.add_argument("--max-requests-per-day", type=int, default=50_000)
     args = parser.parse_args()
     try:
         prices = download_prices(
-            pd.read_parquet(args.input), args.start, args.end, args.request_log, args.max_requests_per_day
+            pd.read_parquet(args.input), args.start, args.end, args.max_requests_per_day
         )
         write_parquet_outputs({args.output: prices})
         print(f"Output: {args.output} ({len(prices)} rows)")

@@ -9,6 +9,7 @@ from pathlib import Path
 import baostock as bs
 import pandas as pd
 
+from mme.common.baostock_requests import reserve_baostock_request
 from mme.common.output import write_parquet_outputs
 
 SECURITY_TYPE_MAP = {
@@ -44,11 +45,12 @@ def standardize_security_basics(frame: pd.DataFrame) -> pd.DataFrame:
     return basics.loc[:, ["security_code", "exchange", "bs_code", "security_name", "security_type", "ipo_date", "out_date", "listing_status"]]
 
 
-def download_security_basics(output: Path) -> pd.DataFrame:
+def download_security_basics(output: Path, max_requests_per_day: int = 50_000) -> pd.DataFrame:
     login = bs.login()
     if login.error_code != "0":
         raise RuntimeError(f"BaoStock login failed: {login.error_msg}")
     try:
+        reserve_baostock_request('query_stock_basic', max_requests_per_day)
         basics = standardize_security_basics(baostock_result_to_frame(bs.query_stock_basic()))
     finally:
         bs.logout()
@@ -61,9 +63,10 @@ def download_security_basics(output: Path) -> pd.DataFrame:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=Path("data/source/security/baostock_security_basics.parquet"))
+    parser.add_argument("--max-requests-per-day", type=int, default=50_000)
     args = parser.parse_args()
     try:
-        basics = download_security_basics(args.output)
+        basics = download_security_basics(args.output, args.max_requests_per_day)
         print(f"Output: {args.output} ({len(basics)} rows; ETFs={(basics.security_type == 'etf').sum()})")
     except Exception as error:
         print(f"error: {error}", file=sys.stderr)
