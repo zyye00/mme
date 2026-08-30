@@ -35,6 +35,8 @@ def standardize_security_basics(frame: pd.DataFrame) -> pd.DataFrame:
     missing = required - set(frame.columns)
     if missing:
         raise ValueError(f"BaoStock response is missing columns: {', '.join(sorted(missing))}")
+    if frame.empty:
+        raise ValueError("BaoStock returned no security basic information")
     basics = frame.loc[:, ["code", "code_name", "ipoDate", "outDate", "type", "status"]].copy()
     basics.columns = ["bs_code", "security_name", "ipo_date", "out_date", "type_code", "listing_status"]
     basics["exchange"] = basics["bs_code"].str.split(".").str[0].map({"sh": "SSE", "sz": "SZSE"})

@@ -50,7 +50,7 @@ def load_etf_universe(path: Path = UNIVERSE_PATH) -> pd.DataFrame:
         for row in index_definitions.itertuples()
     }
     if actual_indexes != EXPECTED_INDEXES:
-        raise ValueError("ETF 映射的指数代码、名称或顺序与约定的 7 个指数不一致")
+        raise ValueError("ETF 映射的分类代码、名称或顺序与约定的 11 个分类不一致")
 
     return universe.sort_values(["index_order", "fund_code"]).reset_index(drop=True)
 

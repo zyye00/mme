@@ -11,6 +11,16 @@ import pandas as pd
 from mme.common.output import write_parquet_outputs
 
 REQUIRED_COLUMNS = {"trade_date", "exchange", "security_code", "security_name", "financing_buy_amount"}
+FIRST_DAY_GROUP_SIZE = 10
+GROUP_OUTPUT_COLUMNS = [
+    "trade_date",
+    "exchange",
+    "security_code",
+    "security_name",
+    "financing_buy_amount",
+    "tier",
+    "first_day_rank",
+]
 SECURITY_TYPE_NAMES = {
     "stock": "股票",
     "etf": "ETF",
@@ -20,9 +30,7 @@ SECURITY_TYPE_NAMES = {
 }
 
 
-def analyze_first_day(details: pd.DataFrame, threshold: float) -> tuple[pd.DataFrame, pd.DataFrame]:
-    if not 0 < threshold <= 1:
-        raise ValueError("threshold must be in (0, 1]")
+def _rank_first_day_financing(details: pd.DataFrame) -> pd.DataFrame:
     missing = REQUIRED_COLUMNS - set(details.columns)
     if missing:
         raise ValueError(f"input is missing columns: {', '.join(sorted(missing))}")
@@ -33,11 +41,25 @@ def analyze_first_day(details: pd.DataFrame, threshold: float) -> tuple[pd.DataF
     first_day = details["trade_date"].min()
     ranked = details.loc[
         (details["trade_date"] == first_day) & (details["financing_buy_amount"] > 0)
-    ].sort_values("financing_buy_amount", ascending=False, kind="stable").reset_index(drop=True)
-    total = ranked["financing_buy_amount"].sum()
-    if not total:
+    ].copy()
+    if ranked.empty:
         raise ValueError("first trading day has no positive financing purchase amount")
+    if ranked.duplicated(["exchange", "security_code"]).any():
+        raise ValueError("first trading day contains duplicate exchange and security_code records")
+    ranked = ranked.sort_values(
+        ["financing_buy_amount", "exchange", "security_code"],
+        ascending=[False, True, True],
+        kind="stable",
+    ).reset_index(drop=True)
     ranked["rank"] = ranked.index + 1
+    return ranked
+
+
+def analyze_first_day(details: pd.DataFrame, threshold: float) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if not 0 < threshold <= 1:
+        raise ValueError("threshold must be in (0, 1]")
+    ranked = _rank_first_day_financing(details)
+    total = ranked["financing_buy_amount"].sum()
     ranked["cumulative_amount"] = ranked["financing_buy_amount"].cumsum()
     ranked["cumulative_ratio"] = ranked["cumulative_amount"] / total
     cutoff = ranked["cumulative_ratio"].ge(threshold).idxmax()
@@ -46,6 +68,27 @@ def analyze_first_day(details: pd.DataFrame, threshold: float) -> tuple[pd.DataF
         [{"security_count": len(selected), "financing_buy_amount": selected["financing_buy_amount"].sum(), "amount_ratio": selected["financing_buy_amount"].sum() / total}]
     )
     return selected, summary
+
+
+def select_first_day_financing_groups(
+    details: pd.DataFrame, group_size: int = FIRST_DAY_GROUP_SIZE
+) -> pd.DataFrame:
+    """Select fixed highest and middle groups from the first-day financing ranking."""
+    if group_size <= 0:
+        raise ValueError("group_size must be positive")
+    ranked = _rank_first_day_financing(details)
+    if len(ranked) < group_size * 3:
+        raise ValueError(f"at least {group_size * 3} positive first-day securities are required")
+
+    middle_start = (len(ranked) - group_size) // 2
+    groups = pd.concat(
+        [
+            ranked.iloc[:group_size].assign(tier="highest"),
+            ranked.iloc[middle_start : middle_start + group_size].assign(tier="median"),
+        ],
+        ignore_index=True,
+    ).rename(columns={"rank": "first_day_rank"})
+    return groups.loc[:, GROUP_OUTPUT_COLUMNS]
 
 
 def annotate_security_types(selected: pd.DataFrame, basics: pd.DataFrame) -> pd.DataFrame:
@@ -91,10 +134,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--input", type=Path, default=Path("data/source/margin/margin_financing_buy.parquet"))
     parser.add_argument("--basics", type=Path, default=Path("data/source/security/baostock_security_basics.parquet"))
     parser.add_argument("--threshold", type=float, default=0.8)
+    parser.add_argument("--group-size", type=int, default=FIRST_DAY_GROUP_SIZE)
     parser.add_argument(
         "--data-output",
         type=Path,
         default=Path("data/derived/margin/first_day_top80.parquet"),
+    )
+    parser.add_argument(
+        "--groups-output",
+        type=Path,
+        default=Path("data/derived/margin/first_day_financing_tiers.parquet"),
     )
     parser.add_argument("--output-dir", type=Path, default=Path("output/margin"))
     return parser
@@ -103,10 +152,12 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = build_parser().parse_args()
     try:
-        selected, summary = analyze_first_day(pd.read_parquet(args.input), args.threshold)
+        details = pd.read_parquet(args.input)
+        selected, summary = analyze_first_day(details, args.threshold)
+        groups = select_first_day_financing_groups(details, args.group_size)
         selected = annotate_security_types(selected, pd.read_parquet(args.basics))
         type_summary = summarize_security_types(selected)
-        write_parquet_outputs({args.data_output: selected})
+        write_parquet_outputs({args.data_output: selected, args.groups_output: groups})
         args.output_dir.mkdir(parents=True, exist_ok=True)
         detail_path = args.output_dir / "first_day_top80_by_type.csv"
         summary_path = args.output_dir / "first_day_top80_summary.csv"
@@ -121,7 +172,10 @@ def main() -> int:
         )
         print(summary.to_string(index=False))
         print(type_summary.to_string(index=False))
-        print(f"Output: {args.data_output}\nOutput: {detail_path}\nOutput: {summary_path}\nOutput: {type_summary_path}")
+        print(
+            f"Output: {args.data_output}\nOutput: {args.groups_output}\nOutput: {detail_path}"
+            f"\nOutput: {summary_path}\nOutput: {type_summary_path}"
+        )
     except Exception as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

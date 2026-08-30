@@ -61,3 +61,12 @@ def test_load_etf_universe_rejects_index_name_code_conflict(tmp_path: Path) -> N
 
     with pytest.raises(ValueError, match="指数代码与名称|指数名称与代码"):
         load_etf_universe(path)
+
+
+def test_load_etf_universe_reports_expected_category_count(tmp_path: Path) -> None:
+    universe = ETF_UNIVERSE.loc[ETF_UNIVERSE["index_code"].ne("industry_medicine")]
+    path = tmp_path / "universe.csv"
+    universe.to_csv(path, index=False, columns=UNIVERSE_COLUMNS)
+
+    with pytest.raises(ValueError, match="约定的 11 个分类"):
+        load_etf_universe(path)

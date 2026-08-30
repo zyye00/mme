@@ -199,6 +199,7 @@ def fetch_with_retries(
 def download_etf_navs(
     output_path: Path,
     fund_codes: set[str] = TARGET_FUND_CODES,
+    end: date | None = None,
     dividend_start: date | None = None,
     dividend_end: date | None = None,
     request_interval: float = 0.8,
@@ -213,8 +214,11 @@ def download_etf_navs(
     failures: list[tuple[str, str]] = []
     fund_codes = sorted(fund_codes)
     today = date.today()
+    end = end or today
     dividend_start = dividend_start or date(today.year, 1, 1)
-    dividend_end = dividend_end or today
+    dividend_end = dividend_end or end
+    if dividend_end > end:
+        raise ValueError("分红截止日期不得晚于统一数据截止日期")
     years = dividend_years(dividend_start, dividend_end)
     progress(f"净值下载：共 {len(fund_codes)} 只 ETF")
 
@@ -276,11 +280,17 @@ def download_etf_navs(
         raise RuntimeError("ETF 净值或拆分下载不完整，现有 Parquet 输出未被替换")
     failure_path.unlink(missing_ok=True)
 
+    cutoff = pd.Timestamp(end)
     navs = pd.concat(frames, ignore_index=True).drop_duplicates(["fund_code", "trade_date"], keep="last")
+    navs = navs.loc[navs["trade_date"].le(cutoff)]
+    missing_navs = sorted(set(fund_codes) - set(navs["fund_code"]))
+    if missing_navs:
+        raise ValueError(f"截止 {end} 缺少 ETF 净值：{', '.join(missing_navs)}")
     navs = navs.sort_values(["fund_code", "trade_date"]).reset_index(drop=True)
     warnings = validate_navs(navs)
     splits = pd.concat(split_frames, ignore_index=True) if split_frames else pd.DataFrame(columns=SPLIT_COLUMNS)
-    splits = splits.loc[:, SPLIT_COLUMNS].sort_values(["fund_code", "split_date"]).reset_index(drop=True)
+    splits = splits.loc[splits["split_date"].le(cutoff), SPLIT_COLUMNS]
+    splits = splits.sort_values(["fund_code", "split_date"]).reset_index(drop=True)
     dividends = (
         pd.concat(dividend_frames, ignore_index=True)
         if dividend_frames
@@ -289,6 +299,12 @@ def download_etf_navs(
     dividends = dividends.loc[:, DIVIDEND_COLUMNS].drop_duplicates().sort_values(
         ["fund_code", "record_date", "ex_date", "payment_date"], na_position="last"
     ).reset_index(drop=True)
+    paid_by_cutoff = dividends["payment_date"].isna() | dividends["payment_date"].le(cutoff)
+    dividends = dividends.loc[
+        dividends["record_date"].between(pd.Timestamp(dividend_start), pd.Timestamp(dividend_end))
+        & dividends["ex_date"].le(cutoff)
+        & paid_by_cutoff
+    ].reset_index(drop=True)
     split_path = output_path.parent / "etf_splits.parquet"
     dividend_path = output_path.parent / "etf_dividends.parquet"
     write_parquet_outputs({output_path: navs, split_path: splits, dividend_path: dividends})
@@ -301,9 +317,10 @@ def download_etf_navs(
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=Path("data/source/subscription/etf_nav.parquet"))
+    parser.add_argument("--end", type=date.fromisoformat, default=date.today())
     parser.add_argument("--request-interval", type=float, default=0.8)
     parser.add_argument("--dividend-start", type=date.fromisoformat, default=date(date.today().year, 1, 1))
-    parser.add_argument("--dividend-end", type=date.fromisoformat, default=date.today())
+    parser.add_argument("--dividend-end", type=date.fromisoformat)
     return parser
 
 
@@ -312,6 +329,7 @@ def main() -> int:
     try:
         result = download_etf_navs(
             args.output,
+            end=args.end,
             dividend_start=args.dividend_start,
             dividend_end=args.dividend_end,
             request_interval=args.request_interval,

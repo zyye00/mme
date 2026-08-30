@@ -184,6 +184,74 @@ def test_download_etf_navs_writes_complete_outputs(tmp_path: Path) -> None:
     assert len(pd.read_parquet(tmp_path / "etf_dividends.parquet")) == 1
 
 
+def test_download_etf_navs_applies_data_cutoff(tmp_path: Path) -> None:
+    def fetch_with_future_data(symbol: str, indicator: str) -> pd.DataFrame:
+        if indicator == "单位净值走势":
+            return pd.DataFrame(
+                {
+                    "净值日期": ["2026-07-24", "2026-07-27"],
+                    "单位净值": [1.0, 1.1],
+                    "日增长率": [None, 10.0],
+                }
+            )
+        return pd.DataFrame(
+            {
+                "拆分折算日": ["2026-07-24", "2026-07-27"],
+                "拆分类型": ["份额分拆", "份额分拆"],
+                "拆分折算比例": ["1:2.0000", "1:2.0000"],
+            }
+        )
+
+    def fetch_dividends_with_future_payment(year: str, typ: str) -> pd.DataFrame:
+        assert year == "2026"
+        assert typ == "指数型-股票"
+        return pd.DataFrame(
+            {
+                "基金代码": [510100.0, 510100.0],
+                "权益登记日": ["2026-07-20", "2026-07-21"],
+                "除息日期": ["2026-07-21", "2026-07-22"],
+                "分红": [0.01, 0.02],
+                "分红发放日": ["2026-07-24", "2026-07-27"],
+            }
+        )
+
+    output_path = tmp_path / "etf_nav.parquet"
+    download_etf_navs(
+        output_path,
+        fund_codes={"510100"},
+        end=date(2026, 7, 25),
+        dividend_start=date(2026, 1, 1),
+        request_interval=0,
+        fetch=fetch_with_future_data,
+        dividend_fetch=fetch_dividends_with_future_payment,
+        sleeper=lambda _: None,
+        progress=lambda message: None,
+    )
+
+    assert pd.read_parquet(output_path)["trade_date"].dt.date.tolist() == [date(2026, 7, 24)]
+    assert pd.read_parquet(tmp_path / "etf_splits.parquet")["split_date"].dt.date.tolist() == [
+        date(2026, 7, 24)
+    ]
+    assert pd.read_parquet(tmp_path / "etf_dividends.parquet")["payment_date"].dt.date.tolist() == [
+        date(2026, 7, 24)
+    ]
+
+
+def test_download_etf_navs_rejects_dividend_end_after_data_cutoff(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="分红截止日期"):
+        download_etf_navs(
+            tmp_path / "etf_nav.parquet",
+            fund_codes={"510100"},
+            end=date(2026, 7, 25),
+            dividend_end=date(2026, 7, 26),
+            request_interval=0,
+            fetch=fetch,
+            dividend_fetch=fetch_dividends,
+            sleeper=lambda _: None,
+            progress=lambda message: None,
+        )
+
+
 def test_validate_navs_rejects_duplicates() -> None:
     navs = pd.DataFrame(
         {

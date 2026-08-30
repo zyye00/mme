@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mme"
+version = "0.1.0"
+description = "ETF subscription and margin-financing profitability research"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "akshare",
+    "baostock",
+    "matplotlib",
+    "pandas",
+    "pyarrow",
+]
+
+[project.optional-dependencies]
+dev = [
+    "jupyterlab",
+    "pytest",
+    "ruff",
+]

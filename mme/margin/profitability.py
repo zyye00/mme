@@ -2,7 +2,7 @@ import pandas as pd
 
 
 def build_positions(margin: pd.DataFrame, securities: pd.DataFrame, prices: pd.DataFrame) -> pd.DataFrame:
-    """Build valid margin-entry batches with their adjusted entry prices."""
+    """Build financing-purchase batches with adjusted market-average entry-price proxies."""
     keys = securities[['exchange', 'security_code']].drop_duplicates()
     positions = margin.merge(keys, on=['exchange', 'security_code'], how='inner').merge(
         prices,
@@ -36,7 +36,7 @@ def calculate_sample_coverage(margin: pd.DataFrame, sample: pd.DataFrame) -> pd.
 
 
 def calculate_cumulative_profitability(positions: pd.DataFrame, prices: pd.DataFrame) -> pd.DataFrame:
-    """Calculate the cumulative share of profitable financing-entry money by evaluation date."""
+    """Calculate the cumulative positive-return financing-amount share proxy by evaluation date."""
     records = []
     for evaluation_date, evaluation_prices in prices.groupby('trade_date', sort=True):
         current = _evaluate_positions(positions, evaluation_date, evaluation_prices)
@@ -91,7 +91,7 @@ def calculate_tier_profitability(
     tier_prices: pd.DataFrame,
     tier_metadata: pd.DataFrame,
 ) -> pd.DataFrame:
-    """Calculate cumulative profitability for first-day financing tiers."""
+    """Calculate cumulative return proxies for first-day financing-amount groups."""
     positions = build_positions(margin, tiers, tier_prices).merge(
         tiers[['tier', 'first_day_rank', 'exchange', 'security_code']],
         on=['exchange', 'security_code'],
@@ -139,7 +139,7 @@ def calculate_industry_cumulative_profitability(
     sample_metadata: pd.DataFrame,
     tier_metadata: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Calculate cumulative profitability for fixed-sample stocks in tier industries."""
+    """Calculate cumulative return proxies for fixed-sample stocks in group industries."""
     industry_scope = (
         tier_metadata.loc[tier_metadata.security_type.eq('stock'), ['industry', 'industry_classification']]
         .dropna()
@@ -186,7 +186,7 @@ def calculate_industry_cumulative_profitability(
 def calculate_rolling_profitability(
     positions: pd.DataFrame, prices: pd.DataFrame, window_days: int
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Calculate security-level and aggregate rolling profitability."""
+    """Calculate security-level and aggregate rolling return proxies."""
     evaluation_dates = prices.trade_date.drop_duplicates().sort_values().tolist()
     security_records = []
     overall_records = []
@@ -255,10 +255,10 @@ def calculate_rolling_profitability(
 def select_rolling_securities(
     rolling_security: pd.DataFrame,
     security_metadata: pd.DataFrame,
-    excluded_high_codes: set[str],
+    excluded_security_codes: set[str],
     size: int,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Rank rolling results and select high/low groups with and without return filters."""
+    """Rank rolling results after symmetric exclusions and select exploratory high/low groups."""
     ranking = (
         rolling_security.loc[rolling_security.is_full_window]
         .groupby(['exchange', 'security_code'], as_index=False)
@@ -269,11 +269,15 @@ def select_rolling_securities(
         )
         .merge(security_metadata, on=['exchange', 'security_code'], how='left', validate='one_to_one')
     )
+    if size <= 0:
+        raise ValueError('Selection size must be positive.')
+    ranking = ranking.loc[~ranking.security_code.isin(excluded_security_codes)].copy()
+    if len(ranking) < size * 2:
+        raise RuntimeError(f'At least {size * 2} eligible securities are required for disjoint high/low groups.')
     ranking['profit_ratio_rank'] = ranking.mean_profit_ratio.rank(ascending=False, method='min').astype(int)
-    eligible_high = ranking.loc[~ranking.security_code.isin(excluded_high_codes)]
-    ratio_high = eligible_high.nlargest(size, 'mean_profit_ratio')
+    ratio_high = ranking.nlargest(size, 'mean_profit_ratio')
     ratio_low = ranking.nsmallest(size, 'mean_profit_ratio')
-    return_high = eligible_high.loc[eligible_high.mean_weighted_return.gt(0)].nlargest(size, 'mean_profit_ratio')
+    return_high = ranking.loc[ranking.mean_weighted_return.gt(0)].nlargest(size, 'mean_profit_ratio')
     return_low = ranking.loc[ranking.mean_weighted_return.lt(0)].nsmallest(size, 'mean_profit_ratio')
     if len(return_high) != size or len(return_low) != size:
         raise RuntimeError(f'金额加权收益方向筛选后的证券数量不足 {size} 只。')
@@ -298,7 +302,7 @@ def select_rolling_securities(
 def calculate_rolling_industry_profitability(
     rolling_security: pd.DataFrame, selection: pd.DataFrame, security_metadata: pd.DataFrame
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Aggregate rolling profitability for the stock industries represented by selected securities."""
+    """Aggregate rolling return proxies for the stock industries represented by selected securities."""
     scope = (
         selection.loc[selection.selected_group.notna() & selection.security_type.eq('stock'), ['industry', 'industry_classification']]
         .drop_duplicates()

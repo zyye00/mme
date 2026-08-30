@@ -229,17 +229,18 @@ def _calculate_batches(shares: pd.DataFrame, navs: pd.DataFrame, dividends: pd.D
         raise ValueError("部分申购批次缺少净值数据。")
     batches["target_60_nav_position"] = batches["entry_nav_position"] + 60
     batches["completed_60_trade_days"] = batches["target_60_nav_position"] <= batches["as_of_nav_position"]
-    batches["return_60_nav_position"] = batches["target_60_nav_position"].where(
-        batches["completed_60_trade_days"], batches["as_of_nav_position"]
-    )
+    batches["return_60_nav_position"] = batches["target_60_nav_position"]
     return_60_navs = nav_timeline.rename(
         columns={"date": "return_60_date", "unit_nav": "return_60_unit_nav", "nav_position": "return_60_nav_position"}
     )[["fund_code", "return_60_nav_position", "return_60_date", "return_60_unit_nav"]]
     batches = batches.merge(return_60_navs, on=["fund_code", "return_60_nav_position"], how="left", validate="many_to_one")
-    if batches["return_60_unit_nav"].isna().any():
+    completed = batches["completed_60_trade_days"]
+    if batches.loc[completed, "return_60_unit_nav"].isna().any():
         raise ValueError("部分申购批次无法定位第 60 个交易日净值。")
     batches["as_of_date"] = as_of_date
-    batches["cash_dividend_per_share_60_trade_days"] = _cash_dividends(batches, dividends, "return_60_date")
+    batches["cash_dividend_per_share_60_trade_days"] = _cash_dividends(
+        batches.loc[completed], dividends, "return_60_date"
+    )
     batches["cash_dividend_per_share_to_date"] = _cash_dividends(batches, dividends, "as_of_date")
     batches["estimated_subscription_amount"] = batches["net_subscription_shares"] * batches["entry_unit_nav"]
     batches["return_60_trade_days"] = (
@@ -248,7 +249,7 @@ def _calculate_batches(shares: pd.DataFrame, navs: pd.DataFrame, dividends: pd.D
     batches["return_to_date"] = (
         batches["as_of_unit_nav"] + batches["cash_dividend_per_share_to_date"] - batches["entry_unit_nav"]
     ) / batches["entry_unit_nav"]
-    batches["profitable_60_trade_days"] = batches["return_60_trade_days"] > 0
+    batches["profitable_60_trade_days"] = batches["return_60_trade_days"].gt(0).where(completed).astype("boolean")
     batches["profitable_to_date"] = batches["return_to_date"] > 0
     return batches
 
@@ -268,8 +269,12 @@ def _cash_dividends(batches: pd.DataFrame, dividends: pd.DataFrame, exit_date_co
 
 
 def _summarize_indexes(batches: pd.DataFrame, index_reference: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    completed = batches["completed_60_trade_days"]
+    batches["completed_60_trade_day_subscription_amount"] = batches["estimated_subscription_amount"].where(
+        completed, 0.0
+    )
     batches["profitable_amount_60_trade_days"] = batches["estimated_subscription_amount"].where(
-        batches["profitable_60_trade_days"], 0.0
+        completed & batches["profitable_60_trade_days"].fillna(False), 0.0
     )
     batches["profitable_amount_to_date"] = batches["estimated_subscription_amount"].where(
         batches["profitable_to_date"], 0.0
@@ -279,36 +284,61 @@ def _summarize_indexes(batches: pd.DataFrame, index_reference: pd.DataFrame) -> 
     group_columns = ["index_code", "index_name", "index_order"]
     index_daily_batches = batches.groupby(group_columns + ["subscription_date"], as_index=False).agg(
         estimated_subscription_amount=("estimated_subscription_amount", "sum"),
+        completed_60_trade_day_subscription_amount=("completed_60_trade_day_subscription_amount", "sum"),
+        profitable_amount_60_trade_days=("profitable_amount_60_trade_days", "sum"),
+        profitable_amount_to_date=("profitable_amount_to_date", "sum"),
         weighted_return_60_trade_days=("weighted_return_60_trade_days", "sum"),
         weighted_return_to_date=("weighted_return_to_date", "sum"),
-        completed_60_trade_days=("completed_60_trade_days", "all"),
+        subscription_batches=("batch_id", "size"),
+        completed_60_trade_day_batches=("completed_60_trade_days", "sum"),
     )
-    for period in ["60_trade_days", "to_date"]:
-        index_daily_batches[f"return_{period}"] = (
-            index_daily_batches[f"weighted_return_{period}"] / index_daily_batches["estimated_subscription_amount"]
-        )
-        index_daily_batches[f"profitable_{period}"] = index_daily_batches[f"return_{period}"] > 0
+    index_daily_batches["return_60_trade_days"] = (
+        index_daily_batches["weighted_return_60_trade_days"]
+        / index_daily_batches["completed_60_trade_day_subscription_amount"]
+    ).where(index_daily_batches["completed_60_trade_day_subscription_amount"] > 0)
+    index_daily_batches["return_to_date"] = (
+        index_daily_batches["weighted_return_to_date"] / index_daily_batches["estimated_subscription_amount"]
+    )
+    index_daily_batches["profitable_60_trade_days"] = (
+        index_daily_batches["return_60_trade_days"].gt(0).where(index_daily_batches["return_60_trade_days"].notna())
+    )
+    index_daily_batches["profitable_to_date"] = index_daily_batches["return_to_date"] > 0
     index_amounts = batches.groupby(group_columns, as_index=False).agg(
         subscription_amount=("estimated_subscription_amount", "sum"),
+        completed_60_trade_day_subscription_amount=("completed_60_trade_day_subscription_amount", "sum"),
         profitable_amount_60_trade_days=("profitable_amount_60_trade_days", "sum"),
         profitable_amount_to_date=("profitable_amount_to_date", "sum"),
     )
-    index_batch_counts = index_daily_batches.groupby(group_columns, as_index=False).agg(
-        subscription_batches=("subscription_date", "size"),
+    index_batch_counts = batches.groupby(group_columns, as_index=False).agg(
+        subscription_batches=("batch_id", "size"),
         completed_60_trade_day_batches=("completed_60_trade_days", "sum"),
     )
     summary = index_reference.merge(index_amounts, on=group_columns, how="left", validate="one_to_one").merge(
         index_batch_counts, on=group_columns, how="left", validate="one_to_one"
     )
-    amount_columns = ["subscription_amount", "profitable_amount_60_trade_days", "profitable_amount_to_date"]
+    amount_columns = [
+        "subscription_amount",
+        "completed_60_trade_day_subscription_amount",
+        "profitable_amount_60_trade_days",
+        "profitable_amount_to_date",
+    ]
     count_columns = ["subscription_batches", "completed_60_trade_day_batches"]
     summary[amount_columns] = summary[amount_columns].fillna(0.0)
     summary[count_columns] = summary[count_columns].fillna(0).astype(int)
-    for period in ["60_trade_days", "to_date"]:
-        summary[f"profitable_capital_ratio_{period}"] = (
-            summary[f"profitable_amount_{period}"] / summary["subscription_amount"]
-        ).where(summary["subscription_amount"] > 0)
+    summary["profitable_capital_ratio_60_trade_days"] = (
+        summary["profitable_amount_60_trade_days"] / summary["completed_60_trade_day_subscription_amount"]
+    ).where(summary["completed_60_trade_day_subscription_amount"] > 0)
+    summary["profitable_capital_ratio_to_date"] = (
+        summary["profitable_amount_to_date"] / summary["subscription_amount"]
+    ).where(summary["subscription_amount"] > 0)
+    summary["completed_60_trade_day_batch_ratio"] = (
+        summary["completed_60_trade_day_batches"] / summary["subscription_batches"]
+    ).where(summary["subscription_batches"] > 0)
     total_subscription_amount = batches["estimated_subscription_amount"].sum()
+    completed_subscription_amount = batches["completed_60_trade_day_subscription_amount"].sum()
+    profitable_amount_60_trade_days = batches["profitable_amount_60_trade_days"].sum()
+    profitable_amount_to_date = batches["profitable_amount_to_date"].sum()
+    completed_batches = int(batches["completed_60_trade_days"].sum())
     overall = pd.DataFrame(
         [
             {
@@ -316,12 +346,24 @@ def _summarize_indexes(batches: pd.DataFrame, index_reference: pd.DataFrame) -> 
                 "index_name": "总体",
                 "index_order": 99,
                 "subscription_amount": total_subscription_amount,
-                "profitable_amount_60_trade_days": batches.loc[batches["profitable_60_trade_days"], "estimated_subscription_amount"].sum(),
-                "profitable_amount_to_date": batches.loc[batches["profitable_to_date"], "estimated_subscription_amount"].sum(),
-                "subscription_batches": len(index_daily_batches),
-                "completed_60_trade_day_batches": int(index_daily_batches["completed_60_trade_days"].sum()),
-                "profitable_capital_ratio_60_trade_days": batches.loc[batches["profitable_60_trade_days"], "estimated_subscription_amount"].sum() / total_subscription_amount if total_subscription_amount else float("nan"),
-                "profitable_capital_ratio_to_date": batches.loc[batches["profitable_to_date"], "estimated_subscription_amount"].sum() / total_subscription_amount if total_subscription_amount else float("nan"),
+                "completed_60_trade_day_subscription_amount": completed_subscription_amount,
+                "profitable_amount_60_trade_days": profitable_amount_60_trade_days,
+                "profitable_amount_to_date": profitable_amount_to_date,
+                "subscription_batches": len(batches),
+                "completed_60_trade_day_batches": completed_batches,
+                "profitable_capital_ratio_60_trade_days": (
+                    profitable_amount_60_trade_days / completed_subscription_amount
+                    if completed_subscription_amount
+                    else float("nan")
+                ),
+                "profitable_capital_ratio_to_date": (
+                    profitable_amount_to_date / total_subscription_amount
+                    if total_subscription_amount
+                    else float("nan")
+                ),
+                "completed_60_trade_day_batch_ratio": (
+                    completed_batches / len(batches) if len(batches) else float("nan")
+                ),
             }
         ]
     )

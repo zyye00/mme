@@ -19,6 +19,8 @@ def standardize_security_industries(frame: pd.DataFrame) -> pd.DataFrame:
     missing = required - set(frame.columns)
     if missing:
         raise ValueError(f"BaoStock response is missing columns: {', '.join(sorted(missing))}")
+    if frame.empty:
+        raise ValueError("BaoStock returned no security industry information")
     industries = frame.loc[:, ["updateDate", "code", "code_name", "industry", "industryClassification"]].copy()
     industries.columns = ["industry_update_date", "bs_code", "security_name", "industry", "industry_classification"]
     industries["exchange"] = industries["bs_code"].str.split(".").str[0].map({"sh": "SSE", "sz": "SZSE"})

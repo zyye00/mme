@@ -2,9 +2,9 @@
 # Python
 # ====================
 __pycache__/
-
-# Test
-pytest.ini
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
 
 # ====================
 # IDE / Editor
@@ -26,5 +26,5 @@ output/
 # ====================
 # Documentation
 # ====================
-docs/
-*.md
+.agents/
+AGENTS.md

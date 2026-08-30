@@ -1,5 +1,9 @@
+from datetime import date
+
 import pandas as pd
 import pytest
+
+from mme.subscription.profitability import _summarize_indexes
 
 
 def test_index_profitability_and_bubble_return_use_amount_weights() -> None:
@@ -48,3 +52,40 @@ def test_split_adjustment_happens_before_subscription_detection() -> None:
     adjusted_change = current_shares - previous_shares * split_ratio
 
     assert adjusted_change == 100.0
+
+
+def test_60_trade_day_summary_uses_only_completed_batches() -> None:
+    batches = pd.DataFrame(
+        {
+            "batch_id": [0, 1],
+            "index_code": ["000300", "000300"],
+            "index_name": ["沪深300", "沪深300"],
+            "index_order": [1, 1],
+            "subscription_date": [date(2026, 1, 5), date(2026, 1, 5)],
+            "estimated_subscription_amount": [100.0, 300.0],
+            "completed_60_trade_days": [True, False],
+            "return_60_trade_days": [0.10, float("nan")],
+            "profitable_60_trade_days": pd.Series([True, pd.NA], dtype="boolean"),
+            "return_to_date": [0.10, -0.05],
+            "profitable_to_date": [True, False],
+        }
+    )
+    index_reference = batches[["index_code", "index_name", "index_order"]].drop_duplicates()
+
+    daily, summary = _summarize_indexes(batches, index_reference)
+    index_summary = summary.loc[summary["index_code"].eq("000300")].iloc[0]
+    overall = summary.loc[summary["index_code"].eq("ALL")].iloc[0]
+
+    assert daily.loc[0, "estimated_subscription_amount"] == 400.0
+    assert daily.loc[0, "completed_60_trade_day_subscription_amount"] == 100.0
+    assert daily.loc[0, "return_60_trade_days"] == pytest.approx(0.10)
+    assert daily.loc[0, "return_to_date"] == pytest.approx(-0.0125)
+    for row in [index_summary, overall]:
+        assert row["subscription_amount"] == 400.0
+        assert row["completed_60_trade_day_subscription_amount"] == 100.0
+        assert row["profitable_amount_60_trade_days"] == 100.0
+        assert row["profitable_capital_ratio_60_trade_days"] == pytest.approx(1.0)
+        assert row["profitable_capital_ratio_to_date"] == pytest.approx(0.25)
+        assert row["subscription_batches"] == 2
+        assert row["completed_60_trade_day_batches"] == 1
+        assert row["completed_60_trade_day_batch_ratio"] == pytest.approx(0.5)
